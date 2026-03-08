@@ -14,3 +14,7 @@ dependencies = [
 
 [tool.setuptools]
 packages = ["apollo"]
+
+[tool.pytest.ini_options]
+pythonpath = [".."]
+testpaths = ["tests"]
