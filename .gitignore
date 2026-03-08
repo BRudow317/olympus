@@ -25,5 +25,10 @@ dist-ssr
 
 __pycache__
 .trash
+.bin
 .venv
 .pytest_cache
+*secret*
+
+pyrightconfig.json
+*data*
