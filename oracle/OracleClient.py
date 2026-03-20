@@ -11,18 +11,19 @@ class OracleClient:
     oracle_user: str | None = field(default_factory=lambda: os.environ.get('ORACLE_USER'))
     oracle_pass: str | None = field(default_factory=lambda: os.environ.get('ORACLE_PASS'))
     oracle_host: str | None = field(default_factory=lambda: os.environ.get('ORACLE_HOST'))
-    oracle_port: int | None = field(default_factory=lambda: int(os.environ.get('ORACLE_PORT', '1521')))
+    oracle_port: int | None = field(default_factory=lambda: int(p) if (p := os.environ.get('ORACLE_PORT', '1521')).isdigit() else 1521)
     oracle_sid: str | None = field(default_factory=lambda: os.environ.get('ORACLE_SID'))
     _current_connection: oracledb.Connection | None = None
-    _open_cursors: list[oracledb.Cursor] = field(default_factory=list)
     def get_con(self) -> oracledb.Connection:
         try:
             logger.debug('Enter: OracleUser.get_con')
             if self._current_connection is not None:
-                if self._current_connection.is_healthy():
+                try:
                     self._current_connection.ping()
                     logger.debug('Connection Healthy: Returning Existing Connection')
                     return self._current_connection
+                except oracledb.Error:
+                    logger.debug('Ping failed: Creating New Connection')
             logger.debug('Connection Not Established: Creating New Connection')
             self._current_connection = oracledb.connect(user=self.oracle_user, password=self.oracle_pass, host=self.oracle_host, port=self.oracle_port, service_name=self.oracle_sid)
             return self._current_connection
@@ -50,27 +51,26 @@ class OracleClient:
             raise
     def fetchall(self, sql: str, binds: dict[str, Any] | None = None):
         try:
-            response = []
-            cursor = self.get_cursor(); cursor.execute(sql, binds or {})
-            description = cursor.description
-            if description:
-                columns = [col[0] for col in description]
-                cursor.rowfactory = lambda *args: dict(zip(columns, args))
-                response = cursor.fetchall()
-            return response
+            with self.get_cursor() as cursor:
+                cursor.execute(sql, binds or {})
+                if cursor.description:
+                    columns = [col[0] for col in cursor.description]
+                    cursor.rowfactory = lambda *args: dict(zip(columns, args))
+                    return cursor.fetchall()
+            return []
         except Exception as e:
             logger.error(f'Error in OracleUser.fetchall: {e}')
             raise
     def execute_sql(self, sql: str, **input_sizes):
         logger.debug(f'Enter: OracleUser.execute_sql: {sql}')
+        con = self.get_con()
         try:
             cursor = self.get_cursor(**input_sizes) if input_sizes else self.get_cursor()
             with cursor:
-                cursor.prepare(sql)
                 cursor.execute(sql)
                 if 'select' not in sql.lower():
-                    self.get_con().commit()
+                    con.commit()
         except Exception as e:
-            self.get_con().rollback()
+            con.rollback()
             logger.error(f'Error executing SQL: {sql} Error: {e}')
             raise

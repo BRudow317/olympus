@@ -7,6 +7,10 @@ import logging
 import oracledb
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+if TYPE_CHECKING:
+    from .OracleClient import OracleClient
+    from .OracleJob import Job
+logger = logging.getLogger(__name__)
 
 _NULL_BYTE_RE = re.compile(r'\x00')
 _COMMA_RE = re.compile(r',')
@@ -15,10 +19,7 @@ _TIMESTAMP_FMTS = ['%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M
 _TZ_OFFSET_RE = re.compile(r'[+-]\d{2}:\d{2}$')
 
 ORACLE_MAX_VARCHAR2_CHAR = 4000
-ORACLE_MAX_IDENTIFIER_LEN_LEGACY = 30
-ORACLE_MAX_IDENTIFIER_LEN_EXTENDED = 128
 varchar2_growth_buffer = 50
-ORACLE_DATATYPES = ["CLOB", "BLOB","VARCHAR2", "NUMBER", "DATE", "TIMESTAMP", "UNKNOWN"]
 
 _ORACLE_RESERVED = frozenset({
 "ACCESS","ADD","ALL","ALTER","AND","ANY","AS","ASC","AUDIT","BETWEEN","BY","CHAR","CHECK","CLUSTER","COLUMN",
@@ -31,10 +32,6 @@ _ORACLE_RESERVED = frozenset({
 "TABLE","THEN","TO","TRIGGER","UID","UNION","UNIQUE","UPDATE","USER","VALIDATE","VALUES","VARCHAR","VARCHAR2",
 "VIEW","WHENEVER","WHERE","WITH"})
 
-if TYPE_CHECKING:
-    from .OracleClient import OracleClient
-
-logger = logging.getLogger(__name__)
 
 @dataclass
 class OracleTable:
@@ -42,7 +39,6 @@ class OracleTable:
     table_name: str = ''
     schema_name: str = ''
     column_map: dict[str, OracleColumn] = field(default_factory=dict)
-    test_run: bool = False
     _fetched_db_col: list[dict[str, Any]] | None = field(default=None, init=False)
     _insert_sql_stmt: str | None = field(default=None, init=False)
     @property
@@ -82,10 +78,9 @@ class OracleTable:
             logger.error(f'Error: OracleTable._fetch_tab_columns Error: {e}')
             raise
     def _wipe_fetch_cache(self) -> None:
-        object.__setattr__(self, '_insert_sql_stmt', None)
-    def add_column(self, col: OracleColumn) -> None:
-        if col.oracle_name not in self.column_map and col.oracle_name is not None:
-            self.column_map[col.oracle_name] = col
+        self._fetched_db_col = None
+        self._insert_sql_stmt = None
+    
     def _align_columns(self) -> None:
         try:
             if len(self._fetch_tab_columns) > 0:
@@ -107,6 +102,7 @@ class OracleTable:
         except Exception as e:
             logger.error(f'Error: OracleTable._align_columns Error: {e}')
             raise
+    
     def _check_existing_column_size(self) -> None:
         all_tab_columns = self._fetch_tab_columns
         all_tab_names = [row.get('COLUMN_NAME') for row in all_tab_columns]
@@ -121,11 +117,14 @@ class OracleTable:
                 all_tab_row = [row for row in all_tab_columns if row['COLUMN_NAME'] == oc_obj.target_name][0]
                 if all_tab_row.get('DATA_TYPE') == 'VARCHAR2':
                     current_db_limit = int(str(all_tab_row.get('CHAR_LENGTH') or 0))
-                    current_data_max = oc_obj.char_length or 0
-                    if current_data_max > current_db_limit:
+                    current_data_max = oc_obj.detected_max_length or oc_obj.char_length or 0
+                    if current_data_max > ORACLE_MAX_VARCHAR2_CHAR:
+                        logger.warning(f"Column '{oc_obj.oracle_name}' data exceeds VARCHAR2 limit ({current_data_max}); cannot convert existing column to CLOB — skipping.")
+                    elif current_data_max > current_db_limit:
                         self._alter_modify_existing_column(oc_obj)
         if new_cols:
             self._alter_add_columns(new_cols)
+    
     def _build_new_table(self) -> None:
         for oracle_column in self.column_map.values():
             oracle_column.oracle_name = oracle_column.target_name
@@ -134,12 +133,14 @@ class OracleTable:
         create_table_ddl = f'CREATE TABLE {self.qualified_name} ({cols_sql})'
         self.oracle_client.execute_sql(create_table_ddl)
         self._wipe_fetch_cache(); self._align_columns()
+    
     def _alter_modify_existing_column(self, col: OracleColumn) -> None:
         if col.data_type != 'VARCHAR2':
             raise ValueError(f'build_alter_modify only supports VARCHAR2 columns: {col.oracle_name}')
-        if (col.char_length or 0) > ORACLE_MAX_VARCHAR2_CHAR:
+        data_max = col.detected_max_length or col.char_length or 0
+        if data_max > ORACLE_MAX_VARCHAR2_CHAR:
             raise ValueError(f'{col.oracle_name} observed length exceeds VARCHAR2 limit')
-        new_size = effective_max_varchar2(col.char_length or 0)
+        new_size = effective_max_varchar2(data_max)
         stmt = f'ALTER TABLE {self.qualified_name} MODIFY ({col.oracle_name} VARCHAR2({new_size} CHAR))'
         self.oracle_client.execute_sql(stmt)
         self._wipe_fetch_cache(); self._align_columns()
@@ -148,7 +149,7 @@ class OracleTable:
         if not new_columns: raise ValueError('build_alter_add called with empty new_columns')
         col_defs = ','.join(col.column_definition() for col in new_columns)
         stmt = f'ALTER TABLE {self.qualified_name} ADD ({col_defs})'
-        self.oracle_client.execute_sql(stmt); self._align_columns()
+        self.oracle_client.execute_sql(stmt); self._wipe_fetch_cache(); self._align_columns()
     
     def build_input_sizes(self) -> dict[str, object]:
         try:
@@ -161,7 +162,7 @@ class OracleTable:
                 elif dt in ('NUMBER','FLOAT'): sizes[bind_name] = oracledb.DB_TYPE_NUMBER
                 elif dt == 'DATE': sizes[bind_name] = oracledb.DB_TYPE_DATE
                 elif dt.startswith('TIMESTAMP'): sizes[bind_name] = oracledb.DB_TYPE_TIMESTAMP
-                elif dt == 'CLOB': sizes[bind_name] = oracledb.DB_TYPE_CLOB
+                elif dt == 'CLOB': pass  # omit: DB_TYPE_CLOB causes per-row LOB round-trips in executemany
                 elif dt == 'BLOB': sizes[bind_name] = oracledb.DB_TYPE_BLOB
                 elif dt == 'RAW': sizes[bind_name] = oracledb.DB_TYPE_RAW
                 elif dt == 'JSON': sizes[bind_name] = oracledb.DB_TYPE_JSON
@@ -176,7 +177,9 @@ class OracleTable:
         column_map={}
         if not col_dict: return column_map
         for target_name, col_info in col_dict.items():
-            column_map[target_name] = OracleColumn(target_name=str(col_info.get('target_name')), csv_header_name=col_info.get('csv_col_name'), csv_index=int(str(col_info.get('index'))))
+            detected = int(col_info.get('max_col_size') or 0)
+            data_type = 'CLOB' if detected > ORACLE_MAX_VARCHAR2_CHAR else 'VARCHAR2'
+            column_map[target_name] = OracleColumn(target_name=str(col_info.get('target_name')), csv_header_name=col_info.get('csv_col_name'), csv_index=int(str(col_info.get('index'))), detected_max_length=detected, data_type=data_type)
         return column_map
     @staticmethod
     def construct_table(col_dict: dict[str, dict[str, str]], table: str, schema: str, oracle_client: OracleClient) -> OracleTable:
@@ -190,43 +193,34 @@ class OracleColumn:
     csv_header_name: str | None = None
     csv_index: int | None = None
     target_name: str = ''
-    py_data_type: str = ''
     detected_max_length: int | None = None
     oracle_name: str | None = None
     data_type: str = 'VARCHAR2'
     column_id: int | None = None
-    is_key: bool = False
-    is_foreign_key: bool = False
     nullable: bool = True
     char_length: int | None = None
     char_used: str | None = None
-    data_scale: int | None = None
-    data_precision: int | None = None
     is_new: bool = False
-    needs_modified: bool = False
-    is_ready: bool = False
     def __post_init__(self) -> None:
         if not self.target_name and self.csv_header_name:
             object.__setattr__(self, 'target_name', to_oracle_snake(self.csv_header_name))
     @property
     def bind_name(self) -> str:
         return self.oracle_name or self.target_name or (self.csv_header_name or '')
-    def type_new_column(self) -> str:
-        if self.data_type == 'UNKNOWN':
-            raise ValueError(f"Cannot generate DDL for column '{self.oracle_name}': data_type is UNKNOWN. Run type inference before building DDL.")
-        nullable_clause = 'NULL' if self.nullable else 'NOT NULL'
-        type_clause = self._type_clause()
-        return f'{self.oracle_name} {type_clause} {nullable_clause}'
+    
     def _type_clause(self) -> str:
         if self.data_type == 'VARCHAR2':
-            if (self.char_length or 0) > ORACLE_MAX_VARCHAR2_CHAR:
-                raise ValueError(f"Column '{self.oracle_name}' observed length {self.char_length} exceeds VARCHAR2 limit.")
-            sized = effective_max_varchar2(self.char_length) if self.char_length else varchar2_growth_buffer
+            observed = self.char_length or self.detected_max_length or 0
+            if observed > ORACLE_MAX_VARCHAR2_CHAR:
+                raise ValueError(f"Column '{self.oracle_name}' observed length {observed} exceeds VARCHAR2 limit.")
+            sized = effective_max_varchar2(observed) if observed else varchar2_growth_buffer
             return f'VARCHAR2({sized} CHAR)'
         if self.data_type == 'NUMBER': return 'NUMBER'
         if self.data_type == 'DATE': return 'DATE'
         if self.data_type == 'TIMESTAMP': return 'TIMESTAMP'
+        if self.data_type == 'CLOB': return 'CLOB'
         raise ValueError(f"Unrecognised data_type '{self.data_type}' on column '{self.oracle_name}'.")
+    
     def column_definition(self) -> str:
         if self.data_type == 'UNKNOWN':
             raise ValueError(f"Cannot generate DDL for column '{self.oracle_name}': data_type is UNKNOWN.")
@@ -274,9 +268,6 @@ def normalize_cell(raw: str, data_type: str) -> Any:
     elif data_type == 'TIMESTAMP': return _to_datetime(value)
     else: return normalize_apos(value.strip())
 
-def strip_null_bytes(value: str) -> str: return _NULL_BYTE_RE.sub('', value)
-def is_empty(value: str) -> bool: return not _NULL_BYTE_RE.sub('', value).strip()
-
 def _to_decimal(value: str) -> Decimal | None:
     cleaned = _COMMA_RE.sub('', value.strip())
     try: return Decimal(cleaned)
@@ -293,9 +284,6 @@ def _to_datetime(value: str) -> datetime | str:
         try: return datetime.strptime(cleaned, fmt)
         except ValueError: continue
     return stripped
-
-def normalize_quotes(name: str) -> str:
-    return '"' + (name or '').replace('"', '""') + '"'
 
 def normalize_apos(cell: str) -> str:
     return (cell or '').replace("'", "''")

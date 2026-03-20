@@ -1,4 +1,4 @@
-from oracle.Job import Job
+from oracle.OracleJob import Job
 
 def main():
     job=Job(source_path='~/Downloads/olympus_test.csv')
