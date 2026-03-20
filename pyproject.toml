@@ -13,8 +13,8 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["apollo"]
+packages = ["oracle"]
 
 [tool.pytest.ini_options]
-pythonpath = [".."]
+pythonpath = ["."]
 testpaths = ["tests"]
