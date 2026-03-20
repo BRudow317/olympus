@@ -1,7 +1,7 @@
 from __future__ import annotations
 import csv
 from pathlib import Path
-from typing import Iterator, Type
+from typing import Iterator
 import logging
 from .OracleModels import OracleTable, to_oracle_snake
 from .OracleClient import OracleClient
@@ -78,4 +78,13 @@ class Job:
 
     def run_job(self) -> int:
         self.oracle_table = OracleTable.construct_table(self.col_dict, self.table, self.schema, self.oracle_client)
+        self.batch = []
+        row_stream = self.rows()
+        while True:
+            batch = Batch.batch_exec(self, row_stream, self.batch_size)
+            if batch.total_rows == 0:
+                break
+            self.batch.append(batch)
+            if batch.all_rows_failed:
+                return 1
         return 0

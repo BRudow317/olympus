@@ -8,7 +8,7 @@ import oracledb
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
-_NULL_BYTE_RE = re.compile(r'x\00')
+_NULL_BYTE_RE = re.compile(r'\x00')
 _COMMA_RE = re.compile(r',')
 _DATE_FMT = '%Y-%m-%d'
 _TIMESTAMP_FMTS = ['%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S']
@@ -60,7 +60,7 @@ class OracleTable:
             columns.append(oracle_col)
             if not col.csv_header_name: raise ValueError(f"Cannot build bind for column '{oracle_col}': csv_header_name missing")
             binds.append(col.bind_name if col.bind_name.startswith(':') else f':{col.bind_name}')
-        return f"INSERT INTO {self.qualified_name} ({','.join(columns)})VALUES ({','.join(binds)})"
+        return f"INSERT INTO {self.qualified_name} ({','.join(columns)}) VALUES ({','.join(binds)})"
     @property
     def _fetch_tab_columns(self):
         logger.debug('Enter: OracleTable._fetch_tab_columns')
@@ -173,7 +173,7 @@ class OracleTable:
         column_map={}
         if not col_dict: return column_map
         for target_name, col_info in col_dict.items():
-            column_map[target_name] = OracleColumn(target_name=str(col_info.get('target_name')), csv_header_name=col_info.get('csv_header_name'), csv_index=int(str(col_info.get('index'))))
+            column_map[target_name] = OracleColumn(target_name=str(col_info.get('target_name')), csv_header_name=col_info.get('csv_col_name'), csv_index=int(str(col_info.get('index'))))
         return column_map
     @staticmethod
     def construct_table(col_dict: dict[str, dict[str, str]], table: str, schema: str, oracle_client: OracleClient) -> OracleTable:

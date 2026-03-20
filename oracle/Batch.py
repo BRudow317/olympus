@@ -5,11 +5,11 @@ from typing import Iterator
 logger = logging.getLogger(__name__)
 
 from typing import TYPE_CHECKING
+from .OracleModels import normalize_cell
 if TYPE_CHECKING:
     from .Job import Job
     from .OracleModels import OracleTable
     from .OracleClient import OracleClient
-    from .OracleModels import normalize_cell
 
 @dataclass
 class Batch:
