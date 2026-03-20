@@ -31,8 +31,6 @@ class Job:
         self.file_name = self.source_path.name
         self.table = table or to_oracle_snake(self.file_name.rsplit('.', 1)[0])
         self.batch_size = batch_size
-        
-        # PANDAS UPDATE: Read headers via dataframe
         df_head = pd.read_csv(self.source_path, nrows=0, encoding='utf-8')
         file_headers = df_head.columns.tolist()
         if not file_headers: raise ValueError('CSV file has no headers.')
@@ -49,7 +47,7 @@ class Job:
                                           "target_name": target_name, 
                                           "csv_col_name": h, 
                                           "index": str(i)
-                                          }        
+                                          }
         self.validate_row_alignment()
     
     def validate_row_alignment(self) -> None:
@@ -71,10 +69,7 @@ class Job:
         self.oracle_table = OracleTable.construct_table(self.col_dict, self.table, self.schema, self.oracle_client)
         self.batch = []
         batch_start = 2  # row 1 is the header
-        
-        # MASTER TRANSACTION CONTROLLER
         con = self.oracle_client.get_con()
-        
         try:
             for chunk in pd.read_csv(self.source_path, dtype=str, keep_default_na=False,
                                      encoding='utf-8', on_bad_lines='error', chunksize=self.batch_size):
@@ -83,13 +78,11 @@ class Job:
                 self.batch.append(batch)
                 batch_start += batch.total_rows
                 
-                # Hard Fail Logic
                 if batch.failed:
                     logger.error("Job aborted due to row errors. Rolling back all data.")
                     con.rollback()
                     return 1
             
-            # If all chunks succeed, commit everything at once
             con.commit()
             logger.info("Job completed successfully. All batches committed.")
             return 0

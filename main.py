@@ -1,5 +1,7 @@
 from oracle.OracleJob import Job
 
+
+
 def main():
     job=Job(source_path='~/Downloads/olympus_test.csv')
     job.run_job()

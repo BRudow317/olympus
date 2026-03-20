@@ -9,7 +9,6 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 if TYPE_CHECKING:
     from .OracleClient import OracleClient
-    from .OracleJob import Job
 logger = logging.getLogger(__name__)
 
 _NULL_BYTE_RE = re.compile(r'\x00')
