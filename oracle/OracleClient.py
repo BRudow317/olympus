@@ -17,13 +17,8 @@ class OracleClient:
     def get_con(self) -> oracledb.Connection:
         try:
             logger.debug('Enter: OracleUser.get_con')
-            if self._current_connection is not None:
-                try:
-                    self._current_connection.ping()
-                    logger.debug('Connection Healthy: Returning Existing Connection')
-                    return self._current_connection
-                except oracledb.Error:
-                    logger.debug('Ping failed: Creating New Connection')
+            if self._current_connection is not None and self._current_connection.is_healthy():
+                return self._current_connection
             logger.debug('Connection Not Established: Creating New Connection')
             self._current_connection = oracledb.connect(user=self.oracle_user, password=self.oracle_pass, host=self.oracle_host, port=self.oracle_port, service_name=self.oracle_sid)
             return self._current_connection
