@@ -81,7 +81,7 @@ class Job:
         self.batch = []
         row_stream = self.rows()
         while True:
-            batch = Batch.batch_exec(self, row_stream, self.batch_size)
+            batch = Batch.batch_exec(self, row_stream)
             if batch.total_rows == 0:
                 break
             self.batch.append(batch)

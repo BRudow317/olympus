@@ -52,6 +52,8 @@ class OracleTable:
         return f'{self.schema_name}.{self.table_name}'
     @property
     def insert_sql_stmt(self) -> str:
+        if self._insert_sql_stmt is not None:
+            return self._insert_sql_stmt
         if not self.column_map:
             raise ValueError(f'Cannot generate insert_sql for {self.qualified_name}; columns empty')
         columns=[]; binds=[]
@@ -60,7 +62,8 @@ class OracleTable:
             columns.append(oracle_col)
             if not col.csv_header_name: raise ValueError(f"Cannot build bind for column '{oracle_col}': csv_header_name missing")
             binds.append(col.bind_name if col.bind_name.startswith(':') else f':{col.bind_name}')
-        return f"INSERT INTO {self.qualified_name} ({','.join(columns)}) VALUES ({','.join(binds)})"
+        self._insert_sql_stmt = f"INSERT INTO {self.qualified_name} ({','.join(columns)}) VALUES ({','.join(binds)})"
+        return self._insert_sql_stmt
     @property
     def _fetch_tab_columns(self):
         logger.debug('Enter: OracleTable._fetch_tab_columns')
