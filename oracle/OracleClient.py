@@ -7,7 +7,7 @@ import oracledb
 logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
-class OracleUser:
+class OracleClient:
     oracle_user: str | None = field(default_factory=lambda: os.environ.get('ORACLE_USER'))
     oracle_pass: str | None = field(default_factory=lambda: os.environ.get('ORACLE_PASS'))
     oracle_host: str | None = field(default_factory=lambda: os.environ.get('ORACLE_HOST'))
