@@ -41,6 +41,8 @@ class OracleTable:
     column_map: dict[str, OracleColumn] = field(default_factory=dict)
     _fetched_db_col: list[dict[str, Any]] | None = field(default=None, init=False)
     _insert_sql_stmt: str | None = field(default=None, init=False)
+    _input_sizes: dict[str, object] | None = field(default=None, init=False)
+    _active_plan: list[tuple] | None = field(default=None, init=False)
     @property
     def qualified_name(self) -> str:
         if self.table_name is None: raise ValueError('Error: table_name cannot be None')
@@ -80,6 +82,8 @@ class OracleTable:
     def _wipe_fetch_cache(self) -> None:
         self._fetched_db_col = None
         self._insert_sql_stmt = None
+        self._input_sizes = None
+        self._active_plan = None
     
     def _align_columns(self) -> None:
         try:
@@ -152,6 +156,8 @@ class OracleTable:
         self.oracle_client.execute_sql(stmt); self._wipe_fetch_cache(); self._align_columns()
     
     def build_input_sizes(self) -> dict[str, object]:
+        if self._input_sizes is not None:
+            return self._input_sizes
         try:
             sizes={}
             for bind_name, col in self.column_map.items():
@@ -167,11 +173,18 @@ class OracleTable:
                 elif dt == 'RAW': sizes[bind_name] = oracledb.DB_TYPE_RAW
                 elif dt == 'JSON': sizes[bind_name] = oracledb.DB_TYPE_JSON
                 else: sizes[bind_name] = None
+            self._input_sizes = sizes
             return sizes
         except Exception as e:
             logger.error(f'Error: OracleTable.build_input_sizes Error: {e}')
             raise
     
+    @property
+    def active_plan(self) -> list[tuple]:
+        if self._active_plan is None:
+            self._active_plan = [(col.csv_index, col.bind_name, col.data_type) for col in self.column_map.values() if col.csv_index is not None]
+        return self._active_plan
+
     @staticmethod
     def construct_column_map(col_dict: dict[str,dict[str,str]]) -> dict[str, OracleColumn]:
         column_map={}
@@ -266,7 +279,7 @@ def normalize_cell(raw: str, data_type: str) -> Any:
     if data_type == 'NUMBER': return _to_decimal(value)
     elif data_type == 'DATE': return _to_date(value)
     elif data_type == 'TIMESTAMP': return _to_datetime(value)
-    else: return normalize_apos(value.strip())
+    else: return value.strip()
 
 def _to_decimal(value: str) -> Decimal | None:
     cleaned = _COMMA_RE.sub('', value.strip())
@@ -285,5 +298,3 @@ def _to_datetime(value: str) -> datetime | str:
         except ValueError: continue
     return stripped
 
-def normalize_apos(cell: str) -> str:
-    return (cell or '').replace("'", "''")
