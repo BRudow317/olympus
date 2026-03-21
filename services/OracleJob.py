@@ -17,19 +17,19 @@ class Job:
     col_dict: dict[str, dict[str, str]]
 
     def __init__(self, 
-                 source_path: Path|str, 
-                 oracle_client: OracleClient = OracleClient(), 
+                 source_path: Path|str,
+                 oracle_client: OracleClient = OracleClient(),
                  table: str = '', 
                  schema: str = '', 
                  batch_size: int = 10000
                  ):
         self.col_dict = {}
         self.oracle_client = oracle_client
-        self.schema = schema or oracle_client.oracle_user or ''
+        self.schema = schema.upper() or str(oracle_client.oracle_user).upper() or ''
         self.source_path = Path(source_path).expanduser().resolve()
         if not self.source_path.is_file(): raise FileNotFoundError(f'Source file not found: {self.source_path}')
         self.file_name = self.source_path.name
-        self.table = table or to_oracle_snake(self.file_name.rsplit('.', 1)[0])
+        self.table = to_oracle_snake(table.upper() or self.file_name.rsplit('.', 1)[0].upper(), reserved_prefix='SF')
         self.batch_size = batch_size
         df_head = pd.read_csv(self.source_path, nrows=0, encoding='utf-8')
         file_headers = df_head.columns.tolist()
@@ -49,12 +49,17 @@ class Job:
                                           "index": str(i)
                                           }
         self.validate_row_alignment()
+        self.batch = []
     
     def validate_row_alignment(self) -> None:
         max_lengths = [0] * self.col_count
         row_count = 0
-        for chunk in pd.read_csv(self.source_path, dtype=str, keep_default_na=False,
-                                  encoding='utf-8', on_bad_lines='error', chunksize=50000):
+        for chunk in pd.read_csv(self.source_path,
+                                dtype=str,
+                                keep_default_na=False,
+                                encoding='utf-8',
+                                on_bad_lines='error',
+                                chunksize=10000):
             if len(chunk.columns) != self.col_count:
                 raise ValueError(f'Column count mismatch: expected {self.col_count}, got {len(chunk.columns)}')
             chunk_max = chunk.apply(lambda s: s.str.len().max()).fillna(0).astype(int).tolist()
@@ -64,26 +69,35 @@ class Job:
             col['max_col_size'] = str(max_lengths[int(col['index'])])
         self.row_count = row_count
         self.alignment_validated = True
+        max_row_bytes = sum(max_lengths)
+        self.effective_batch_size = max(1, min(self.batch_size, (50 * 1024 * 1024) // max_row_bytes)) if max_row_bytes else self.batch_size
 
     def run_job(self) -> int:
         self.oracle_table = OracleTable.construct_table(self.col_dict, self.table, self.schema, self.oracle_client)
-        self.batch = []
+        if self.effective_batch_size != self.batch_size:
+            logger.info(f'Batch size reduced from {self.batch_size} to {self.effective_batch_size} rows based on max row size')
         batch_start = 2  # row 1 is the header
+        batch_count = 0
         con = self.oracle_client.get_con()
         try:
-            for chunk in pd.read_csv(self.source_path, dtype=str, keep_default_na=False,
-                                     encoding='utf-8', on_bad_lines='error', chunksize=self.batch_size):
+            for chunk in pd.read_csv(self.source_path,
+                                     dtype=str,
+                                     keep_default_na=False,
+                                     encoding='utf-8',
+                                     on_bad_lines='error',
+                                     chunksize=self.effective_batch_size):
                 
                 batch = Batch.batch_exec(self, chunk, batch_start)
+                batch_count += 1
                 self.batch.append(batch)
                 batch_start += batch.total_rows
-                
+                logger.debug(f'Completed batch {batch_count} | rows {batch_start - batch.total_rows}-{batch_start - 1} | 'f'processed {batch.rows_processed_count} rows with {batch.error_count} errors.')
                 if batch.failed:
                     logger.error("Job aborted due to row errors. Rolling back all data.")
                     con.rollback()
                     return 1
-            
-            con.commit()
+                con.commit()
+
             logger.info("Job completed successfully. All batches committed.")
             return 0
             
@@ -110,16 +124,31 @@ class Batch:
         if chunk.empty: return batch
         batch.total_rows = len(chunk)
         active_plan = job.oracle_table.active_plan
-        
+
         formatted_data = [
             {bind_name: normalize_cell(row[idx], dtype) for idx, bind_name, dtype in active_plan}
             for row in chunk.itertuples(index=False, name=None)
         ]
-        
+
         batch.rows_processed_count = len(formatted_data)
-        batch.error_count = batch.batch_execute_inserts(sql=job.oracle_table.insert_sql_stmt, row_list=formatted_data, input_sizes=job.oracle_table.build_input_sizes(), connection=job.oracle_client.get_con(), batch_start=batch_start)
-        
-        if batch.error_count > 0:
+        connection = job.oracle_client.get_con()
+        try:
+            with connection.cursor() as cursor:
+                input_sizes = job.oracle_table.build_input_sizes()
+                if input_sizes: cursor.setinputsizes(**input_sizes)
+                cursor.executemany(job.oracle_table.insert_sql_stmt, formatted_data, batcherrors=True)
+                batch_errors = cursor.getbatcherrors()
+        except Exception:
+            connection.rollback(); raise
+
+        if batch_errors:
+            batch_end = batch_start + len(formatted_data) - 1
+            failed_lines = '\n'.join(f'  Row {batch_start + e.offset}: {e.message.strip()}' for e in batch_errors)
+            logger.error(
+                f'Batch failed | rows {batch_start}-{batch_end} | {len(batch_errors)} error(s):\n{failed_lines}\n'
+                f'  Example: Row {batch_start + batch_errors[0].offset}: {batch_errors[0].message.strip()}'
+            )
+            batch.error_count = len(batch_errors)
             batch.failed = True
             batch.message = f"""------ Batch Has Errors ------
                                 total_rows={batch.total_rows}
@@ -130,24 +159,3 @@ class Batch:
         else:
             batch.message = 'Batch Success'; logger.info(batch.message)
         return batch
-
-    def batch_execute_inserts(self, sql, row_list, connection, input_sizes=None, batcherrors=True, batch_start: int = 2) -> int:
-        try:
-            cursor = connection.cursor()
-            if input_sizes: cursor.setinputsizes(**input_sizes)
-            cursor.executemany(sql, row_list, batcherrors=batcherrors)
-            batch_errors = cursor.getbatcherrors()
-            cursor.close()
-            
-            if batch_errors:
-                batch_end = batch_start + len(row_list) - 1
-                failed_lines = '\n'.join(f'  Row {batch_start + e.offset}: {e.message.strip()}' for e in batch_errors)
-                logger.error(
-                    f'Batch failed | rows {batch_start}-{batch_end} | {len(batch_errors)} error(s):\n{failed_lines}\n'
-                    f'  Example: Row {batch_start + batch_errors[0].offset}: {batch_errors[0].message.strip()}'
-                )
-                return len(batch_errors)
-            
-            return 0
-        except Exception:
-            connection.rollback(); raise
