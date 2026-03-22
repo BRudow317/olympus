@@ -113,7 +113,7 @@ class OracleTable:
                 col_obj.is_new = False
                 current_db_length = int(str(row.get('CHAR_LENGTH') or 0))
                 if col_obj.data_type == 'VARCHAR2' and col_obj.effective_max_varchar2 > current_db_length:
-                    self.char_length = current_db_length
+                    col_obj.char_length = current_db_length
                     self._alter_modify_existing_column(col_obj)
                     self._wipe_fetch_cache()
                     self._align_columns(); return
@@ -123,11 +123,12 @@ class OracleTable:
             self._align_columns(); return
     
     def _build_new_table(self) -> None:
+        col_defs = []
         for oracle_column in self.column_map.values():
             oracle_column.oracle_name = oracle_column.target_name
             oracle_column.is_new = True
-            cols_stmt = ','.join(oracle_column.column_definition())
-
+            col_defs.append(oracle_column.column_definition())
+        cols_stmt = ','.join(col_defs)
         sql = f'CREATE TABLE {self.qualified_name} ({cols_stmt})'
         with self.oracle_client.get_con().cursor() as cursor:
             cursor.execute(sql)
