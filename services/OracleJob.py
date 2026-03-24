@@ -30,7 +30,7 @@ class Job:
         self.col_dict = {}
         self.oracle_client = oracle_client
         self.schema = schema.upper() or str(oracle_client.oracle_user).upper() or ''
-        self.source_path = Path(source_path).expanduser().resolve()
+        self.source_path = Path(source_path).expanduser().resolve() 
         if not self.source_path.is_file(): raise FileNotFoundError(f'Source file not found: {self.source_path}')
         self.file_name = self.source_path.name
         self.table = to_oracle_snake(table.upper() or self.file_name.rsplit('.', 1)[0].upper(), reserved_prefix='SF')
@@ -48,7 +48,8 @@ class Job:
             target_name = base_name
             counter=2
             while target_name in self.col_dict:
-                target_name = f'{base_name}_{counter}'; counter += 1
+                target_name = f'{base_name}_{counter}'
+                counter += 1
             self.col_dict[target_name] = {
                                           "target_name": target_name, 
                                           "csv_col_name": h, 

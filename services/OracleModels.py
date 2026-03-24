@@ -45,6 +45,7 @@ class OracleTable:
     _insert_sql_stmt: str | None = field(default=None, init=False)
     _input_sizes: dict[str, object] | None = field(default=None, init=False)
     _active_plan: list[tuple] | None = field(default=None, init=False)
+
     @property
     def qualified_name(self) -> str:
         if self.table_name is None: raise ValueError('Error: table_name cannot be None')
@@ -83,7 +84,7 @@ class OracleTable:
             return res
         else :
             self._fetched_db_col = None
-            return
+            return None
         
     def _wipe_fetch_cache(self) -> None:
         self._fetched_db_col = None
