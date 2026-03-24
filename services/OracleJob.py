@@ -1,8 +1,10 @@
 from __future__ import annotations
+import io
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 import pandas as pd
+from cryptography.fernet import Fernet
 from .OracleModels import OracleTable, to_oracle_snake, normalize_cell
 from .OracleClient import OracleClient
 logger = logging.getLogger(__name__)
@@ -15,13 +17,15 @@ class Job:
     batch_size: int
     batch: list[Batch]
     col_dict: dict[str, dict[str, str]]
+    _key: bytes
 
-    def __init__(self, 
+    def __init__(self,
                  source_path: Path|str,
+                 key: bytes,
                  oracle_client: OracleClient = OracleClient(),
-                 table: str = '', 
-                 schema: str = '', 
-                 batch_size: int = 10000
+                 table: str = '',
+                 schema: str = '',
+                 batch_size: int = 10000,
                  ):
         self.col_dict = {}
         self.oracle_client = oracle_client
@@ -31,7 +35,9 @@ class Job:
         self.file_name = self.source_path.name
         self.table = to_oracle_snake(table.upper() or self.file_name.rsplit('.', 1)[0].upper(), reserved_prefix='SF')
         self.batch_size = batch_size
-        df_head = pd.read_csv(self.source_path, nrows=0, encoding='utf-8')
+        self._key = key
+        buffer: io.BytesIO = self.get_bytes()
+        df_head = pd.read_csv(buffer, nrows=0, encoding='utf-8')
         file_headers = df_head.columns.tolist()
         if not file_headers: raise ValueError('CSV file has no headers.')
         self.col_count = len(file_headers)
@@ -54,7 +60,8 @@ class Job:
     def validate_row_alignment(self) -> None:
         max_lengths = [0] * self.col_count
         row_count = 0
-        for chunk in pd.read_csv(self.source_path,
+        buffer: io.BytesIO = self.get_bytes()
+        for chunk in pd.read_csv(buffer,
                                 dtype=str,
                                 keep_default_na=False,
                                 encoding='utf-8',
@@ -72,6 +79,11 @@ class Job:
         max_row_bytes = sum(max_lengths)
         self.effective_batch_size = max(1, min(self.batch_size, (50 * 1024 * 1024) // max_row_bytes)) if max_row_bytes else self.batch_size
 
+    def get_bytes(self) -> io.BytesIO:
+        file_path = Path(self.source_path)
+        plaintext = Fernet(self._key).decrypt(file_path.read_bytes())
+        return io.BytesIO(plaintext)
+    
     def run_job(self) -> int:
         self.oracle_table = OracleTable.construct_table(self.col_dict, self.table, self.schema, self.oracle_client)
         if self.effective_batch_size != self.batch_size:
@@ -80,7 +92,8 @@ class Job:
         batch_count = 0
         con = self.oracle_client.get_con()
         try:
-            for chunk in pd.read_csv(self.source_path,
+            buffer: io.BytesIO = self.get_bytes()
+            for chunk in pd.read_csv(buffer,
                                      dtype=str,
                                      keep_default_na=False,
                                      encoding='utf-8',
@@ -93,7 +106,7 @@ class Job:
                 batch_start += batch.total_rows
                 logger.debug(f'Completed batch {batch_count} | rows {batch_start - batch.total_rows}-{batch_start - 1} | 'f'processed {batch.rows_processed_count} rows with {batch.error_count} errors.')
                 if batch.failed:
-                    logger.error("Job aborted due to row errors. Rolling back all data.")
+                    logger.error("Job aborted due to row errors. con.rollback()....")
                     con.rollback()
                     return 1
                 con.commit()
