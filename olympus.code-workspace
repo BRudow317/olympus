@@ -1,0 +1,71 @@
+{
+  "folders": [
+    {
+      "name": "olympus",
+      "path": "."
+    },
+    {
+      "name": "library",
+      "path": "../library"
+    },
+    {
+      "name": ".secrets",
+      "path": "../.secrets"
+    },
+    {
+      "path": "../scripts"
+    }
+  ],
+  "settings": {
+    "files.associations": {
+      "tsconfig*.json": "jsonc",
+      "*.tsconfig*.json": "jsonc"
+    },
+    "files.exclude": {
+      "**/$RECYCLE.BIN": true,
+      "**/$RECYCLE.BIN/**": true,
+      "**/$Recycle.Bin": true,
+      "**/$Recycle.Bin/**": true,
+      "**/System Volume Information": true,
+      "**/System Volume Information/**": true,
+      "**/WSL/**": true,
+      "**/Docker/**": true,
+      "**/library/**": true,
+      "**/.secrets/**": true,
+    },
+    "search.exclude": {
+      "**/node_modules": true,
+      "**/dist": true,
+      "**/$RECYCLE.BIN": true,
+      "**/$RECYCLE.BIN/**": true,
+      "**/$Recycle.Bin": true,
+      "**/$Recycle.Bin/**": true,
+      "**/System Volume Information": true,
+      "**/System Volume Information/**": true,
+      "**/WSL/**": true,
+      "**/Docker/**": true,
+    },
+    "editor.formatOnSave": true,
+    "[json]": {
+      "editor.defaultFormatter": "vscode.json-language-features",
+    },
+    "[jsonc]": {
+      "editor.defaultFormatter": "vscode.json-language-features",
+    },
+    "python.defaultInterpreterPath": "${workspaceFolder:olympus}/.venv/Scripts/python.exe",
+    "python.terminal.activateEnvironment": true,
+    "python.analysis.diagnosticMode": "workspace",
+    "python.analysis.useLibraryCodeForTypes": true,
+    "python.analysis.extraPaths": [
+      "${workspaceFolder:olympus}"
+    ],
+    "python.analysis.exclude": [
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/library/**",
+      "**/.secrets/**",
+      "**/.scripts/**",
+    ],
+  },
+}

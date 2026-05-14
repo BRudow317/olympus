@@ -8,13 +8,16 @@ version = "0.1.0"
 description = "olympus"
 requires-python = ">=3.11"
 dependencies = [
-  "cryptography>=46.0.5",
-  "oracledb>=3.4.2",
+  "cryptography",
+  "oracledb",
+  "polars",
+  "pyarrow",
+  "tzdata"
 ]
 
 [tool.setuptools]
 packages = ["apollo"]
 
 [tool.pytest.ini_options]
-pythonpath = [".."]
+pythonpath = ["."]
 testpaths = ["tests"]
