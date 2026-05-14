@@ -18,9 +18,6 @@ def _q(identifier: str) -> str:
     return ".".join(f'"{part}"' for part in identifier.split("."))
 
 
-# ##########################################
-# Entity resolution
-# ##########################################
 
 def _get_root_entity(catalog: Catalog) -> Entity:
     """Return the join-topology root: the entity never on a join's right side.
@@ -63,10 +60,6 @@ def _get_target_entity(catalog: Catalog) -> Entity:
 
     return _get_root_entity(catalog)
 
-
-# ##########################################
-# WHERE clause builder (recursive OperatorGroup → SQL fragment)
-# ##########################################
 
 def _bind_name(col: str, binds: dict[str, Any]) -> str:
     """Return a unique bind variable name based on the column name.
@@ -245,11 +238,6 @@ def build_select(catalog: Catalog) -> tuple[str, dict[str, Any]]:
     )
     return sql, binds
 
-
-# ##########################################
-# INSERT
-# ##########################################
-
 def build_insert_dml(catalog: Catalog, entity: Entity) -> tuple[str, dict[str, Any]]:
     """INSERT INTO schema.table (col, …) VALUES (:col, …)
 
@@ -291,10 +279,6 @@ def build_insert_dml(catalog: Catalog, entity: Entity) -> tuple[str, dict[str, A
     )
     return sql, {}
 
-
-# ##########################################
-# UPDATE
-# ##########################################
 
 def build_update_dml(catalog: Catalog, entity: Entity) -> tuple[str, dict[str, Any]]:
     """UPDATE schema.table SET … WHERE …
@@ -338,11 +322,6 @@ def build_update_dml(catalog: Catalog, entity: Entity) -> tuple[str, dict[str, A
         all_binds = where_binds
 
     return f"UPDATE {_q(entity.qualified_name)} SET {set_str}{where_clause}", all_binds
-
-
-# ##########################################
-# MERGE ON clause helpers (catalog.filters → tgt.x = src.y)
-# ##########################################
 
 def _build_merge_operation(
     op: Operation,
@@ -431,11 +410,6 @@ def _build_merge_on(
 
     return " AND ".join(clauses), binds, on_cols
 
-
-# ##########################################
-# MERGE (upsert)
-# ##########################################
-
 def build_merge_dml(catalog: Catalog, entity: Entity) -> tuple[str, dict[str, Any]]:
     """MERGE INTO schema.table tgt USING (SELECT :col AS col … FROM DUAL) src …
 
@@ -496,11 +470,6 @@ def build_merge_dml(catalog: Catalog, entity: Entity) -> tuple[str, dict[str, An
     )
     return sql, binds
 
-
-# ##########################################
-# DELETE
-# ##########################################
-
 def build_delete_dml(catalog: Catalog, entity: Entity) -> tuple[str, dict[str, Any]]:
     """DELETE FROM schema.table [WHERE …]
 
@@ -520,10 +489,6 @@ def build_delete_dml(catalog: Catalog, entity: Entity) -> tuple[str, dict[str, A
 
     return f"DELETE FROM {_q(entity.qualified_name)}", {}
 
-
-# ##########################################
-# Copy-Swap rebuild SELECT (for ALTER TABLE via Copy-Swap DDL strategy)
-# ##########################################
 
 def build_rebuild_select(entity: Entity, existing_names: set[str]) -> str:
     """Build the SELECT expression list for a Copy-Swap table rebuild.

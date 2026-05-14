@@ -5,16 +5,9 @@
       "path": "."
     },
     {
-      "name": "library",
-      "path": "../library"
+      
+      "path": "Q:/"
     },
-    {
-      "name": ".secrets",
-      "path": "../.secrets"
-    },
-    {
-      "path": "../scripts"
-    }
   ],
   "settings": {
     "files.associations": {
@@ -65,7 +58,11 @@
       "**/.pytest_cache/**",
       "**/library/**",
       "**/.secrets/**",
-      "**/.scripts/**",
+      "**/scripts/**",
+      "**/Q:/**",
+    ],
+    "python.analysis.include": [
+      "**/olympus/**",
     ],
   },
 }

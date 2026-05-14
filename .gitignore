@@ -3,7 +3,6 @@ logs
 *.log
 node_modules
 dist
-CLAUDE.md
 dist-ssr
 *.local
 
@@ -29,3 +28,5 @@ pyrightconfig.json
 # Environment files
 *secret*
 *env*
+
+CLAUDE.md

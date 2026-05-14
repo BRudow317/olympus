@@ -35,26 +35,20 @@ from typing import Any
 
 import oracledb
 
-from sf.engines.SfClient import SfClient
-from sf.engines.SfRestEngine import SfRest
-from sf.engines.SfBulk2Engine import Bulk2
-from sf.models.SfTypeMap import SF_TYPE_MAP, cast_record
+from sf.SfClient import SfClient
+from sf.SfRestEngine import SfRest
+from sf.SfBulk2Engine import Bulk2
+from sf.SfTypeMap import SF_TYPE_MAP, cast_record
 from oracle.ora import OracleClient
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
 
 _BATCH_SIZE     = int(os.getenv("BATCH_SIZE", "1000"))
 _BULK_THRESHOLD = int(os.getenv("BULK_THRESHOLD", "50000"))
 _VARCHAR2_GROWTH = int(os.getenv("VARCHAR2_GROWTH", "50"))
 _MAX_VARCHAR2   = 4000
 
-# ---------------------------------------------------------------------------
-# Identifier sanitizer
-# ---------------------------------------------------------------------------
 
 _INVALID = re.compile(r"[^A-Z0-9_]")
 _RESERVED: frozenset[str] = frozenset({
@@ -79,9 +73,6 @@ def _sanitize(name: str, max_len: int = 30) -> str:
         clean = clean + "_COL"
     return clean[:max_len]
 
-# ---------------------------------------------------------------------------
-# SF field -> Oracle DDL / oracledb input size
-# ---------------------------------------------------------------------------
 
 def _field_ddl(field: dict[str, Any]) -> str:
     sf_type = field.get("type", "string")
@@ -191,9 +182,6 @@ def _sync_schema(
         ora.execute_ddl(sql)
         ora.commit()
 
-# ---------------------------------------------------------------------------
-# Data pipeline helpers
-# ---------------------------------------------------------------------------
 
 def _csv_bytes_to_records(
     csv_bytes: bytes,
@@ -230,10 +218,6 @@ def _flush_batch(
         logger.warning("Batch error at offset %d: %s", e.offset, e.message)
     return len(errors)
 
-# ---------------------------------------------------------------------------
-# Per-object migration
-# ---------------------------------------------------------------------------
-
 def migrate_object(
     rest: SfRest,
     bulk2: Bulk2,
@@ -244,7 +228,7 @@ def migrate_object(
     logger.info("=== %s: describe ===", sobject)
     describe = getattr(rest, sobject).describe()
 
-    # Keep only fields with a known Python type mapping; skip compound types
+    # Skip compound types
     fields = [
         f for f in describe.get("fields", [])
         if f.get("type") not in ("address", "location")
@@ -298,9 +282,6 @@ def migrate_object(
 
     logger.info("=== %s: complete — %d batch error(s) ===", sobject, total_errors)
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     parser = argparse.ArgumentParser(
