@@ -1,13 +1,10 @@
 """
 https://developer.salesforce.com/docs/apis
-https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_reference/sforce_api_objects_concepts.htm
-https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_reference/access_for_fields.htm
-https://developer.salesforce.com/docs/atlas.en-us.soql_sosl.meta/soql_sosl/sforce_api_calls_soql_sosl_intro.htm
 https://developer.salesforce.com/docs/atlas.en-us.api_asynch.meta/api_asynch/bulk_api_2_0.htm
-
 """
 from __future__ import annotations
 
+import csv
 import io
 import json
 import time
@@ -16,13 +13,10 @@ import math
 from collections.abc import Iterator
 from typing import Any, TYPE_CHECKING, TypedDict
 
-import pyarrow as pa
-import pyarrow.csv as pa_csv
-
-from server.plugins.sf.models.SfModels import Operation, JobState, ColumnDelimiter, LineEnding, ResultsType
+from sf.models.SfModels import Operation, JobState, ColumnDelimiter, LineEnding, ResultsType
 
 if TYPE_CHECKING:
-    from server.plugins.sf.engines.SfClient import SfClient
+    from sf.engines.SfClient import SfClient
 
 import logging
 logger = logging.getLogger(__name__)
@@ -42,24 +36,17 @@ class QueryBytesResult(TypedDict):
 class Bulk2:
     """
     Entry point for Bulk 2.0 operations.
-    Usage: 
+    Usage:
         sf = Salesforce(...)
-        bulk2 = sf.Bulk2
-        sf.bulk2.Contact.insert(table)
+        sf.bulk2.Contact.insert(records)
         sf.bulk2.query("SELECT Id FROM Contact")
     """
     _http: SfClient
     bulk2_url: str
-    headers: dict[str, str]
 
     def __init__(self, http_client: SfClient) -> None:
         self._http = http_client
         self.bulk2_url = f"{self._http.services_url}/jobs/"
-        # self.headers = {
-        #     "Content-Type": "application/json",
-        #     }
-        # "Authorization": "Bearer " + self._http.access_token,
-        # "X-PrettyPrint": "1",
 
     def __getattr__(self, name: str) -> Bulk2SObject:
         if name.startswith("__"):
@@ -78,9 +65,7 @@ class Bulk2:
 ########################################################
 
 class Bulk2SObject:
-    """High-level Bulk 2.0 interface for a specific SObject.
-    Each SObject (e.g. Contact) is represented as a Bulk2SObject, which provides insert/upsert/update/delete methods for ingest and query/query_all for bulk queries. The object_name "_query" is reserved for bulk query operations that don't have a specific SObject context.
-    """
+    """High-level Bulk 2.0 interface for a specific SObject."""
     object_name: str
     bulk2_url: str
     _http: SfClient
@@ -92,75 +77,43 @@ class Bulk2SObject:
         self._http = http_client
         self._client = _Bulk2Client(object_name, bulk2_url, http_client)
 
-
-    
-
     ########################################################
-    # Arrow / CSV utilities
+    # CSV utilities
     ########################################################
+
     @staticmethod
-    def _csv_bytes_to_arrow_from_schema(data: bytes, schema: pa.Schema) -> pa.Table:
-        """Parse raw CSV bytes into an Arrow table using an explicit schema."""
-        if not data.strip(): return pa.table({}, schema=schema)
-
-        # Salesforce Bulk V2 CSV emits time fields as 'HH:MM:SS.sssZ'.
-        # PyArrow's CSV reader rejects the trailing Z for time64 columns.
-        # Parse those fields as strings first, then strip Z and cast afterward.
-        time64_cols = {
-            schema.field(i).name: schema.field(i).type
-            for i in range(len(schema))
-            if pa.types.is_time(schema.field(i).type)
-        }
-        csv_types = {
-            schema.field(i).name: (pa.string() if schema.field(i).name in time64_cols else schema.field(i).type)
-            for i in range(len(schema))
-        }
-
-        table = pa_csv.read_csv(
-            io.BytesIO(data),
-            convert_options=pa_csv.ConvertOptions(column_types=csv_types),
+    def _records_to_csv_bytes(
+        records: list[dict[str, Any]],
+        line_ending: LineEnding = LineEnding.LF,
+        include_header: bool = True,
+    ) -> bytes:
+        """Serialize a list of dicts to CSV bytes using Python's csv module."""
+        if not records:
+            return b""
+        buf = io.StringIO()
+        writer = csv.DictWriter(
+            buf,
+            fieldnames=list(records[0].keys()),
+            lineterminator="\n",
+            extrasaction="ignore",
         )
-
-        if not time64_cols:
-            return table
-
-        cols: dict[str, pa.Array] = {}
-        for name in table.schema.names:
-            col = table.column(name)
-            if name in time64_cols:
-                py_times = [
-                    None if v is None else datetime.time.fromisoformat(v.rstrip('Z'))
-                    for v in col.to_pylist()
-                ]
-                col = pa.array(py_times, type=time64_cols[name])
-            cols[name] = col
-        return pa.table(cols, schema=schema)
-    @staticmethod
-    def csv_bytes_to_arrow(data: bytes, schema: pa.Schema | None = None) -> pa.Table:
-        """Parse raw CSV bytes with type inference, used for unknown result shapes."""
-        if not data.strip(): return pa.table({})
-        if schema is not None:
-            return Bulk2SObject._csv_bytes_to_arrow_from_schema(data, schema)
-        return pa_csv.read_csv(io.BytesIO(data))
-    
-    @staticmethod
-    def _arrow_to_csv_bytes(table: pa.Table, line_ending: LineEnding = LineEnding.LF, include_header: bool = True) -> bytes:
-        buf = io.BytesIO()
-        pa_csv.write_csv(table, buf, write_options=pa_csv.WriteOptions(include_header=include_header))
-        data = buf.getvalue()
-        if line_ending == LineEnding.CRLF: data = data.replace(b"\n", b"\r\n")
-        else: data = data.replace(b"\r\n", b"\n")
+        if include_header:
+            writer.writeheader()
+        writer.writerows(records)
+        data = buf.getvalue().encode("utf-8")
+        if line_ending == LineEnding.CRLF:
+            data = data.replace(b"\n", b"\r\n")
         return data
 
     ########################################################
-    # --- Ingest internals ---
+    # Ingest internals
     ########################################################
 
     @staticmethod
-    def _split_table(table: pa.Table, chunk_size: int | None) -> list[pa.Table]:
+    def _split_records(records: list[dict[str, Any]], chunk_size: int | None) -> list[list[dict[str, Any]]]:
         size = chunk_size or (MAX_INGEST_JOB_FILE_SIZE // 500)
-        return [table.slice(i, size) for i in range(0, len(table), size)]
-    
+        return [records[i:i + size] for i in range(0, len(records), size)]
+
     def _upload_chunk(
         self,
         operation: Operation,
@@ -178,8 +131,9 @@ class Bulk2SObject:
             line_ending=line_ending,
             external_id_field=external_id_field,
         )
-        job_id = res.get("id", None) or res.get("jobId", None) or res.get("job_id", None)  # API inconsistency between query and ingest job creation
-        if not job_id: raise Exception(f"Failed to create job for chunk upload: {res}")
+        job_id = res.get("id") or res.get("jobId") or res.get("job_id")
+        if not job_id:
+            raise Exception(f"Failed to create job for chunk upload: {res}")
 
         try:
             if res.get("state", "") != JobState.open.value:
@@ -213,87 +167,91 @@ class Bulk2SObject:
     def _upload_table(
         self,
         operation: Operation,
-        table: pa.Table,
+        records: list[dict[str, Any]],
         chunk_size: int | None = None,
         column_delimiter: ColumnDelimiter = ColumnDelimiter.COMMA,
         line_ending: LineEnding = LineEnding.LF,
         external_id_field: str | None = None,
         wait: int = 5,
     ) -> list[dict[str, int]]:
-        """Serialize each Arrow table chunk to CSV bytes and upload as Bulk 2.0 jobs."""
-        chunks = self._split_table(table, chunk_size)
+        """Serialize each chunk of records to CSV bytes and upload as Bulk 2.0 jobs."""
+        chunks = self._split_records(records, chunk_size)
         results: list[dict[str, int]] = []
         for chunk in chunks:
+            data = self._records_to_csv_bytes(chunk, line_ending)
             result = self._upload_chunk(
-                operation, Bulk2SObject._arrow_to_csv_bytes(chunk, line_ending), len(chunk),
+                operation, data, len(chunk),
                 column_delimiter, line_ending, external_id_field, wait,
             )
             results.append(result)
         return results
 
     ########################################################
-    # --- Ingest operations ---
+    # Ingest operations
     ########################################################
+
     def insert(
         self,
-        table: pa.Table,
+        records: list[dict[str, Any]],
         chunk_size: int | None = None,
         line_ending: LineEnding = LineEnding.LF,
         wait: int = 5,
     ) -> list[dict[str, int]]:
-        return self._upload_table(Operation.insert, table, chunk_size=chunk_size, line_ending=line_ending, wait=wait)
+        return self._upload_table(Operation.insert, records, chunk_size=chunk_size, line_ending=line_ending, wait=wait)
 
     def upsert(
         self,
-        table: pa.Table,
+        records: list[dict[str, Any]],
         external_id_field: str,
         chunk_size: int | None = None,
         line_ending: LineEnding = LineEnding.LF,
         wait: int = 5,
     ) -> list[dict[str, int]]:
         return self._upload_table(
-            Operation.upsert, table,
+            Operation.upsert, records,
             chunk_size=chunk_size, line_ending=line_ending,
             external_id_field=external_id_field, wait=wait,
         )
 
     def update(
         self,
-        table: pa.Table,
+        records: list[dict[str, Any]],
         chunk_size: int | None = None,
         line_ending: LineEnding = LineEnding.LF,
         wait: int = 5,
     ) -> list[dict[str, int]]:
-        return self._upload_table(Operation.update, table, chunk_size=chunk_size, line_ending=line_ending, wait=wait)
+        return self._upload_table(Operation.update, records, chunk_size=chunk_size, line_ending=line_ending, wait=wait)
 
     def delete(
         self,
-        table: pa.Table,
+        records: list[dict[str, Any]],
         line_ending: LineEnding = LineEnding.LF,
         wait: int = 5,
     ) -> list[dict[str, int]]:
-        self._constrain_id_only(table)
-        return self._upload_table(Operation.delete, table, line_ending=line_ending, wait=wait)
+        self._constrain_id_only(records)
+        return self._upload_table(Operation.delete, records, line_ending=line_ending, wait=wait)
 
     def hard_delete(
         self,
-        table: pa.Table,
+        records: list[dict[str, Any]],
         line_ending: LineEnding = LineEnding.LF,
         wait: int = 5,
     ) -> list[dict[str, int]]:
-        self._constrain_id_only(table)
-        return self._upload_table(Operation.hard_delete, table, line_ending=line_ending, wait=wait)
+        self._constrain_id_only(records)
+        return self._upload_table(Operation.hard_delete, records, line_ending=line_ending, wait=wait)
 
     @staticmethod
-    def _constrain_id_only(table: pa.Table) -> None:
-        if [c.lower() for c in table.column_names] != ["id"]:
+    def _constrain_id_only(records: list[dict[str, Any]]) -> None:
+        if not records:
+            return
+        keys = [k.lower() for k in records[0].keys()]
+        if keys != ["id"]:
             raise Exception(
-                f"Delete operations require a table with only an 'Id' column. "
-                f"Got: {table.column_names}"
+                f"Delete operations require records with only an 'Id' key. Got: {list(records[0].keys())}"
             )
-        
+
     ########################################################
-    # --- Bulk2 Query operations ---
+    # Bulk2 Query operations
     ########################################################
 
     def query(
@@ -340,7 +298,7 @@ class Bulk2SObject:
             locator = result["locator"]
             yield result["data"]
 
-    # --- Ingest result retrieval ---
+    # Ingest result retrieval
 
     def get_successful_records(self, job_id: str) -> bytes:
         return self._client.get_ingest_results(job_id, ResultsType.successful.value)
@@ -400,7 +358,8 @@ class _Bulk2Client:
         }
 
         if is_query:
-            if not query: raise Exception("query string is required for query jobs")
+            if not query:
+                raise Exception("query string is required for query jobs")
             payload["query"] = query
             headers = self._headers(self.JSON_CONTENT_TYPE, self.CSV_CONTENT_TYPE)
         else:
@@ -469,13 +428,13 @@ class _Bulk2Client:
         return response.json()
 
     def upload_job_data(self, job_id: str, data: bytes) -> None:
-        if not data: raise Exception("data is required for ingest jobs")
+        if not data:
+            raise Exception("data is required for ingest jobs")
         if len(data) > MAX_INGEST_JOB_FILE_SIZE:
             raise Exception(
                 f"Chunk is {len(data)} bytes - exceeds the {MAX_INGEST_JOB_FILE_SIZE} byte "
                 "Bulk 2.0 limit. Reduce chunk_size on the upload call."
             )
-
         response = self._http.request(
             "PUT",
             self._url(job_id, is_query=False) + "/batches",
@@ -509,7 +468,7 @@ class _Bulk2Client:
         return {
             "locator":           next_locator,
             "number_of_records": int(response.headers["Sforce-NumberOfRecords"]),
-            "data":              filter_null_bytes(response.content),
+            "data":              _filter_null_bytes(response.content),
         }
 
     def get_ingest_results(self, job_id: str, results_type: str) -> bytes:
@@ -518,16 +477,15 @@ class _Bulk2Client:
             self._url(job_id, is_query=False) + f"/{results_type}",
             headers=self._headers(self.JSON_CONTENT_TYPE, self.CSV_CONTENT_TYPE),
         )
-        return filter_null_bytes(response.content)
-
+        return _filter_null_bytes(response.content)
 
 
 from typing import AnyStr
 
-def filter_null_bytes(b: AnyStr) -> AnyStr:
-        """https://github.com/airbytehq/airbyte/issues/8300"""
-        if isinstance(b, str):
-            return b.replace("\x00", "")
-        if isinstance(b, bytes):
-            return b.replace(b"\x00", b"")
-        raise TypeError("Expected str or bytes")
+def _filter_null_bytes(b: AnyStr) -> AnyStr:
+    """https://github.com/airbytehq/airbyte/issues/8300"""
+    if isinstance(b, str):
+        return b.replace("\x00", "")
+    if isinstance(b, bytes):
+        return b.replace(b"\x00", b"")
+    raise TypeError("Expected str or bytes")

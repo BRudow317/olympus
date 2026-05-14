@@ -1,21 +1,5 @@
-"""Apache Arrow: https://arrow.apache.org/docs/python/index.html
-Oracle DataFrame Objects: https://python-oracledb.readthedocs.io/en/latest/api_manual/dataframe.html
-Polars DataFrame: https://docs.pola.rs/api/python/stable/reference/dataframe/index.html
-Apache Arrow PyCapsule Interface: https://arrow.apache.org/docs/format/CDataInterface/PyCapsuleInterface.html
-|-------------------------------------------------------|
-| C Interface Type | PyCapsule Name |
-|-------------------------------------------------------|
-| ArrowSchema | arrow_schema |
-| ArrowArray | arrow_array |
-| ArrowArrayStream | arrow_array_stream |
-| ArrowDeviceArray | arrow_device_array |
-| ArrowDeviceArrayStream | arrow_device_array_stream |
-|-------------------------------------------------------|
-"""
-
 from __future__ import annotations
 
-import os
 import logging
 import oracledb
 from collections.abc import Iterator, Iterable, Callable
@@ -33,15 +17,8 @@ from oracledb import (
     MessageProperties,
 )
 from oracledb.connection import Xid
-import pyarrow as pa
-
 
 logger: logging.Logger = logging.getLogger(__name__)
-
-# TODO: Implement connection pooling for the server database to improve performance and resource management.
-# This can be done using oracledb's ConnectionPool class, and the ServerDatabase can manage a pool of
-# connections instead of a single connection. The connect() method would then acquire a connection from the
-# pool, and there would be a corresponding method to release connections back to the pool when done.
 
 
 class OracleClient:
@@ -60,9 +37,6 @@ class OracleClient:
         "_oracle_service",
         "_current_connection",
     )
-
-    def __frozen__(self) -> bool:
-        return True
 
     def __init__(
         self,
@@ -121,17 +95,12 @@ class OracleClient:
             raise
 
     def connect(self) -> oracledb.Connection:
-        """Use this method for connections for database connection only"""
+        """Return a healthy connection, reconnecting if necessary."""
         if self._current_connection is not None and self._current_connection.is_healthy():
             return self._current_connection
-
         self._new_connect()
-
         if self._current_connection is None:
-            raise RuntimeError(
-                f"Failed to establish Oracle connection: {self.__repr__()}"
-            )
-
+            raise RuntimeError(f"Failed to establish Oracle connection: {self.__repr__()}")
         return self._current_connection
 
     def __call__(self) -> Connection:
@@ -190,38 +159,74 @@ class OracleClient:
         self.connect().current_schema = schema_name
 
     def commit(self) -> None:
-        """Commits the current transaction."""
         self.connect().commit()
 
     def rollback(self) -> None:
-        """Rolls back the current transaction."""
         self.connect().rollback()
 
-    def createlob(
+    def execute_many(
         self,
-        lob_type: DbType,
-        data: str | bytes | None = None,
-    ) -> LOB:
-        return self.connect().createlob(lob_type, data)
-
-    """Apache PyArrow Methods that work with pyarrow schemas, tables, and arrow datatypes """
-
-    def direct_path_load(
-        self,
-        schema_name: str,
-        table_name: str,
-        column_names: list[str],
-        data: Any,
+        sql: str,
+        records: Iterable[dict[str, Any]],
+        input_sizes: dict[str, Any] | None = None,
         *,
-        batch_size: int = 2**32 - 1,
-    ) -> None:
-        self.connect().direct_path_load(
-            schema_name,
-            table_name,
-            column_names,
-            data,
-            batch_size=batch_size,
-        )
+        batcherrors: bool = True,
+        batch_size: int = 1000,
+    ) -> list[Any]:
+        """
+        Bulk DML over an iterable of named-bind dicts.
+        Returns a list of batch errors (empty on clean run).
+        Caller must call commit() after.
+        """
+        all_errors: list[Any] = []
+        batch: list[dict[str, Any]] = []
+
+        with self.connect().cursor() as cursor:
+            if input_sizes:
+                sized = {k: v for k, v in input_sizes.items() if v is not None}
+                if sized:
+                    cursor.setinputsizes(**sized)
+
+            def _flush() -> None:
+                if not batch:
+                    return
+                cursor.executemany(sql, batch, batcherrors=batcherrors)
+                if batcherrors:
+                    all_errors.extend(cursor.getbatcherrors())
+                batch.clear()
+
+            for record in records:
+                batch.append(record)
+                if len(batch) >= batch_size:
+                    _flush()
+            _flush()
+
+        return all_errors
+
+    def query(
+        self,
+        sql: str,
+        binds: dict[str, Any] | None = None,
+        fetch_size: int = 10_000,
+    ) -> Iterator[dict[str, Any]]:
+        """Execute a SELECT and yield rows as dicts."""
+        binds = binds or {}
+        with self.connect().cursor() as cursor:
+            cursor.arraysize = fetch_size
+            cursor.execute(sql, binds)
+            if cursor.description:
+                columns = [str(col[0]) for col in cursor.description]
+                for row in cursor:
+                    yield dict(zip(columns, row))
+
+    def execute_ddl(self, sql: str) -> None:
+        """Execute a DDL statement (CREATE, ALTER, DROP)."""
+        with self.connect().cursor() as cursor:
+            try:
+                cursor.execute(sql)
+            except oracledb.Error as e:
+                logger.error("Oracle DDL failed: %s | %s", sql, e)
+                raise
 
     def fetch_df_all(
         self,
@@ -249,7 +254,6 @@ class OracleClient:
         fetch_decimals: bool | None = None,
         requested_schema: Any | None = None,
     ) -> Iterator[DataFrame]:
-        """https://python-oracledb.readthedocs.io/en/latest/api_manual/connection.html#oracledb.Connection.fetch_df_batches"""
         return self.connect().fetch_df_batches(
             statement,
             parameters,
@@ -258,164 +262,25 @@ class OracleClient:
             requested_schema=requested_schema,
         )
 
-    def odf_to_arrow(self, odf: oracledb.DataFrame) -> pa.Table:
-        """Zero copy conversion to a PyArrow Table via the PyCapsule interface."""
-        return pa.Table.from_arrays(odf.column_arrays(), names=odf.column_names())
-
-    def arrow_query(
+    def direct_path_load(
         self,
-        statement: str,
-        parameters: list | tuple | dict | None = None,
-        size: int = 50_000,
-        fetch_decimals: bool = True,
-    ) -> pa.RecordBatchReader:
-        """Returns a PyArrow RecordBatchReader"""
-        raw_iter: Iterator[oracledb.DataFrame] = self.fetch_df_batches(
-            statement=statement,
-            parameters=parameters,
-            size=size,
-            fetch_decimals=fetch_decimals,
-        )
-
-        try:
-            odf: oracledb.DataFrame = next(raw_iter)
-            first_table: pa.Table = self.odf_to_arrow(odf)
-        except StopIteration:
-            return pa.RecordBatchReader.from_batches(pa.schema([]), iter([]))
-
-        schema: pa.Schema = first_table.schema
-
-        def batch_generator() -> Iterator[pa.RecordBatch]:
-            yield from first_table.to_batches()
-            for record_batch in raw_iter:
-                yield from self.odf_to_arrow(record_batch).to_batches()
-
-        return pa.RecordBatchReader.from_batches(schema, batch_generator())
-
-    def execute_many(
-        self,
-        sql: str | Iterable[tuple[str, dict]],
-        data: pa.RecordBatchReader,
-        input_sizes: dict[str, Any] | None = None,
+        schema_name: str,
+        table_name: str,
+        column_names: list[str],
+        data: Any,
         *,
-        batcherrors: bool = False,
+        batch_size: int = 2**32 - 1,
     ) -> None:
-        """Generic bulk DML over an Arrow stream. sql can be a single statement string, or an iterable of
-        (statement, static_binds) tuples to execute multiple statements per batch like multiple updates.
-        """
-        statements: list[tuple[str, dict]] = [(sql, {})] if isinstance(sql, str) else list(sql)
-        with self.connect().cursor() as cursor:
-            if input_sizes:
-                cursor.setinputsizes(**input_sizes)
-            for batch in data:
-                records = batch.to_pylist()
-                if not records:
-                    continue
-                for stmt, binds in statements:
-                    parameters = [{**r, **binds} for r in records] if binds else records
-                    cursor.executemany(
-                        statement=stmt,
-                        parameters=parameters,
-                        batcherrors=batcherrors,
-                    )
-            self.connect().commit()
-
-    def get_table_def(self, schema, table) -> oracledb.DataFrame:
-        odf: oracledb.DataFrame = self.fetch_df_all(
-            """
-            SELECT column_name, data_type, data_length, data_precision, data_scale, nullable
-            FROM all_tab_columns
-            WHERE owner = :schema_name
-              AND table_name = :table_name
-            ORDER BY column_id
-            """,
-            {"schema_name": schema, "table_name": table},
+        self.connect().direct_path_load(
+            schema_name,
+            table_name,
+            column_names,
+            data,
+            batch_size=batch_size,
         )
-        return odf
-
-    def create_table(self, schema, table, odf: oracledb.DataFrame) -> None:
-        print("create_table ddl from odf...")
-        cursor = self.connect().cursor()
-        cursor.execute(
-            """
-            select distinct table_name
-            from all_tab_columns
-            where owner = :schema_name
-              AND table_name = :table_name
-            """,
-            {"schema_name": schema, "table_name": table},
-        )
-        if cursor.fetchone():
-            return
-
-        arrow_table = pa.Table.from_arrays(odf.column_arrays(), names=odf.column_names())
-
-        cols = []
-        for row in arrow_table.to_pylist():
-            col_name: str = row.get('COLUMN_NAME')
-            dtype: str = row.get('DATA_TYPE')
-            length: str = row.get('DATA_LENGTH')
-            prec: str = row.get('DATA_PRECISION')
-            scale: str = row.get('DATA_SCALE')
-            nulls: str = row.get('NULLABLE')
-
-            if dtype == "NUMBER":
-                type_str = f"NUMBER({prec if prec else 38}, {scale if scale else 0})"
-            elif "CHAR" in dtype:
-                type_str = f"{dtype}({length})"
-            else:
-                type_str = dtype
-
-            null_str = "NULL" if nulls == "Y" else "NOT NULL"
-            cols.append(f"{col_name} {type_str} {null_str}")
-
-        ddl = f"CREATE TABLE {schema}.{table} ({', '.join(cols)})"
-        print(f"Create Table: {ddl}")
-        self.cursor().execute(ddl)
-        return
-
-    def copy_table(
-        self,
-        source_schema: str,
-        source_table: str,
-        target_schema: str,
-        target_table: str | None = None,
-    ) -> None:
-        if not target_table:
-            target_table = source_table
-
-        odf = self.fetch_df_all(
-            """
-            SELECT column_name, data_type, data_length, data_precision, data_scale, nullable
-            FROM all_tab_columns
-            WHERE owner = :owner
-              AND table_name = :table
-            ORDER BY column_id
-            """,
-            {"owner": source_schema, "table": source_table},
-        )
-
-        arrow_table = pa.Table.from_arrays(odf.column_arrays(), names=odf.column_names())
-        cols = []
-        for row in arrow_table:
-            col_name, dtype, length, prec, scale, nulls = row
-
-            if dtype == "NUMBER":
-                type_str = f"NUMBER({prec if prec else 38}, {scale if scale else 0})"
-            elif "CHAR" in dtype:
-                type_str = f"{dtype}({length})"
-            else:
-                type_str = dtype
-
-            null_str = "NULL" if nulls == "Y" else "NOT NULL"
-            cols.append(f"{col_name} {type_str} {null_str}")
-
-        ddl = f"CREATE TABLE {target_schema}.{target_table} ({', '.join(cols)})"
-        self.cursor().execute(ddl)
 
     def plus_query(self, sql: str) -> tuple[int, str | None, str | None]:
         import sys, subprocess
-
         cmd = ["sqlplus", "-s", self.con_str]
         cmpl_prc = subprocess.run(
             cmd,
@@ -424,13 +289,7 @@ class OracleClient:
             check=False,
             text=True,
         )
-        # 0=good 1=bad
-        returned: tuple[int, str | None, str | None] = (
-            cmpl_prc.returncode,
-            cmpl_prc.stdout,
-            cmpl_prc.stderr,
-        )
-        return returned
+        return (cmpl_prc.returncode, cmpl_prc.stdout, cmpl_prc.stderr)
 
     def cancel(self) -> None:
         self.connect().cancel()
@@ -445,10 +304,10 @@ class OracleClient:
         return self.connect().gettype(name)
 
     def ping(self) -> None:
-        """Throws an exception if the connection is not healthy. Otherwise, returns None."""
         self.connect().ping()
 
-    """Oracle Advanced Queuing Features"""
+    def createlob(self, lob_type: DbType, data: str | bytes | None = None) -> LOB:
+        return self.connect().createlob(lob_type, data)
 
     def msgproperties(
         self,
@@ -461,27 +320,15 @@ class OracleClient:
         recipients: list | None = None,
     ) -> MessageProperties:
         return self.connect().msgproperties(
-            payload,
-            correlation,
-            delay,
-            exceptionq,
-            expiration,
-            priority,
-            recipients,
+            payload, correlation, delay, exceptionq,
+            expiration, priority, recipients,
         )
 
-    def queue(
-        self,
-        name: str,
-        payload_type: DbObjectType | str | None = None,
-    ) -> Queue:
+    def queue(self, name: str, payload_type: DbObjectType | str | None = None) -> Queue:
         q: Queue | AsyncQueue = self.connect().queue(name, payload_type)
         if isinstance(q, Queue):
             return q
-        else:
-            raise TypeError(
-                f"Expected Queue object from connection.queue(), got {type(q)}"
-            )
+        raise TypeError(f"Expected Queue object from connection.queue(), got {type(q)}")
 
     def subscribe(
         self,
@@ -500,22 +347,10 @@ class OracleClient:
         client_initiated: bool = False,
     ) -> oracledb.Subscription:
         return self.connect().subscribe(
-            namespace,
-            protocol,
-            callback,
-            timeout,
-            operations,
-            port,
-            qos,
-            ip_address,
-            grouping_class,
-            grouping_value,
-            grouping_type,
-            name,
-            client_initiated,
+            namespace, protocol, callback, timeout, operations, port, qos,
+            ip_address, grouping_class, grouping_value, grouping_type,
+            name, client_initiated,
         )
-
-    """Connection Properties"""
 
     @property
     def max_open_cursors(self) -> int:
