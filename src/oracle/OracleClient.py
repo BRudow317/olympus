@@ -1,6 +1,7 @@
+"""OracleClient.py"""
 from __future__ import annotations
-
 import logging
+logger: logging.Logger = logging.getLogger(__name__)
 import oracledb
 from collections.abc import Iterator, Iterable, Callable
 from typing import Any
@@ -18,7 +19,7 @@ from oracledb import (
 )
 from oracledb.connection import Xid
 
-logger: logging.Logger = logging.getLogger(__name__)
+
 
 
 class OracleClient:

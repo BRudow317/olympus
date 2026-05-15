@@ -1,9 +1,10 @@
-"""
+"""SfBulk2Engine.py
 https://developer.salesforce.com/docs/apis
 https://developer.salesforce.com/docs/atlas.en-us.api_asynch.meta/api_asynch/bulk_api_2_0.htm
 """
 from __future__ import annotations
-
+import logging
+logger = logging.getLogger(__name__)
 import csv
 import io
 import json
@@ -11,15 +12,12 @@ import time
 import datetime
 import math
 from collections.abc import Iterator
-from typing import Any, TYPE_CHECKING, TypedDict
+from typing import Any, TYPE_CHECKING, TypedDict, AnyStr
 
-from sf.models.SfModels import Operation, JobState, ColumnDelimiter, LineEnding, ResultsType
+from sf.SfClient import Operation, JobState, ColumnDelimiter, LineEnding, ResultsType
 
 if TYPE_CHECKING:
-    from sf.engines.SfClient import SfClient
-
-import logging
-logger = logging.getLogger(__name__)
+    from sf.SfClient import SfClient
 
 MAX_INGEST_JOB_FILE_SIZE = 150 * 1024 * 1024   # 150 MB per job
 MAX_INGEST_JOB_PARALLELISM = 15
@@ -30,17 +28,7 @@ class QueryBytesResult(TypedDict):
     number_of_records: int
     data: bytes
 
-########################################################
-# Bulk2
-########################################################
 class Bulk2:
-    """
-    Entry point for Bulk 2.0 operations.
-    Usage:
-        sf = Salesforce(...)
-        sf.bulk2.Contact.insert(records)
-        sf.bulk2.query("SELECT Id FROM Contact")
-    """
     _http: SfClient
     bulk2_url: str
 
@@ -59,13 +47,8 @@ class Bulk2:
     def query_all(self, soql: str, **kwargs: Any) -> Iterator[bytes]:
         yield from Bulk2SObject("_query", self.bulk2_url, self._http).query_all(soql, **kwargs)
 
-
-########################################################
-# Bulk2SObject
-########################################################
-
 class Bulk2SObject:
-    """High-level Bulk 2.0 interface for a specific SObject."""
+    """Bulk 2.0 interface for a specific SObject."""
     object_name: str
     bulk2_url: str
     _http: SfClient
@@ -76,10 +59,6 @@ class Bulk2SObject:
         self.bulk2_url = bulk2_url
         self._http = http_client
         self._client = _Bulk2Client(object_name, bulk2_url, http_client)
-
-    ########################################################
-    # CSV utilities
-    ########################################################
 
     @staticmethod
     def _records_to_csv_bytes(
@@ -104,10 +83,6 @@ class Bulk2SObject:
         if line_ending == LineEnding.CRLF:
             data = data.replace(b"\n", b"\r\n")
         return data
-
-    ########################################################
-    # Ingest internals
-    ########################################################
 
     @staticmethod
     def _split_records(records: list[dict[str, Any]], chunk_size: int | None) -> list[list[dict[str, Any]]]:
@@ -186,10 +161,6 @@ class Bulk2SObject:
             results.append(result)
         return results
 
-    ########################################################
-    # Ingest operations
-    ########################################################
-
     def insert(
         self,
         records: list[dict[str, Any]],
@@ -250,10 +221,6 @@ class Bulk2SObject:
                 f"Delete operations require records with only an 'Id' key. Got: {list(records[0].keys())}"
             )
 
-    ########################################################
-    # Bulk2 Query operations
-    ########################################################
-
     def query(
         self,
         query: str,
@@ -298,8 +265,6 @@ class Bulk2SObject:
             locator = result["locator"]
             yield result["data"]
 
-    # Ingest result retrieval
-
     def get_successful_records(self, job_id: str) -> bytes:
         return self._client.get_ingest_results(job_id, ResultsType.successful.value)
 
@@ -316,12 +281,10 @@ class Bulk2SObject:
             "unprocessedRecords": self.get_unprocessed_records(job_id),
         }
 
-
-########################################################
-# _Bulk2Client
-########################################################
 class _Bulk2Client:
-    """Low-level Bulk 2.0 HTTP operations. Not for direct use outside Bulk2SObject."""
+    """Low-level Bulk 2.0 HTTP operations. 
+    Not for direct use outside Bulk2SObject.
+    Do Not instantiate directly"""
     JSON_CONTENT_TYPE = "application/json"
     CSV_CONTENT_TYPE = "text/csv; charset=UTF-8"
     DEFAULT_WAIT_TIMEOUT_SECONDS = 7800
@@ -478,9 +441,6 @@ class _Bulk2Client:
             headers=self._headers(self.JSON_CONTENT_TYPE, self.CSV_CONTENT_TYPE),
         )
         return _filter_null_bytes(response.content)
-
-
-from typing import AnyStr
 
 def _filter_null_bytes(b: AnyStr) -> AnyStr:
     """https://github.com/airbytehq/airbyte/issues/8300"""

@@ -1,10 +1,9 @@
+"""SfTypeMap.py"""
 from __future__ import annotations
 import datetime, json, re
 from decimal import Decimal
 from typing import Any, Literal
 
-
-# Individual SObject describe response `type` field → PythonTypes
 PythonTypes = Literal[
     "string",
     "integer",

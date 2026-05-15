@@ -39,7 +39,7 @@ from sf.SfClient import SfClient
 from sf.SfRestEngine import SfRest
 from sf.SfBulk2Engine import Bulk2
 from sf.SfTypeMap import SF_TYPE_MAP, cast_record
-from oracle.ora import OracleClient
+from oracle.OracleClient import OracleClient
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,6 @@ _RESERVED: frozenset[str] = frozenset({
     "EXISTS", "WITH", "COMMIT", "ROLLBACK", "GRANT", "REVOKE",
     "NULL", "TRUE", "FALSE", "ROWID", "ROWNUM", "LEVEL",
 })
-
 
 def _sanitize(name: str, max_len: int = 30) -> str:
     upper = name.upper()
@@ -283,7 +282,7 @@ def migrate_object(
     logger.info("=== %s: complete — %d batch error(s) ===", sobject, total_errors)
 
 
-def main() -> None:
+def migrate() -> None:
     parser = argparse.ArgumentParser(
         description="Migrate Salesforce SObjects to Oracle"
     )
@@ -325,4 +324,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    migrate()

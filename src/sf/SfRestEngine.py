@@ -1,4 +1,4 @@
-"""
+"""SfRestEngine.py
 https://developer.salesforce.com/docs/apis
 https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_reference/sforce_api_objects_concepts.htm
 https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_reference/access_for_fields.htm
@@ -6,21 +6,19 @@ https://developer.salesforce.com/docs/atlas.en-us.soql_sosl.meta/soql_sosl/sforc
 https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/intro_what_is_rest_api.htm
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 import base64, json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import quote_plus
 import httpx
-from sf.models.SfModels import SKIP_SUFFIXES, SKIP_NAMES, SF_BASE_URL, API_VERSION
+from sf.SfClient import SKIP_SUFFIXES, SKIP_NAMES, SF_BASE_URL, API_VERSION
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from sf.engines.SfClient import SfClient
-
-import logging
-logger = logging.getLogger(__name__)
-
+    from sf.SfClient import SfClient
 
 class SfRest:
     """
@@ -180,7 +178,9 @@ class SfRest:
 class RestSObject:
     """
     Interface to a specific Salesforce SObject type.
-    Constructed by SfRest.__getattr__ - not instantiated directly.
+    Constructed by SfRest.__getattr__  
+
+    Do not instantiate directly.
     """
     object_name: str
     _http: SfClient

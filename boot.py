@@ -7,7 +7,6 @@ from __future__ import annotations
 import sys, subprocess, threading, os, argparse, re, logging
 from pathlib import Path
 from datetime import datetime
-
 from typing import IO, TextIO
 
 PROGRAM_NAME = os.getenv("PROGRAM_NAME", "main")

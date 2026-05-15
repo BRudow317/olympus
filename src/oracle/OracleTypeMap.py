@@ -1,9 +1,9 @@
 from typing import Any, Literal
 import oracledb
+from src.models.dto import Column, PYTHON_TYPES
 
-def python_to_oracle_ddl(column: Column) -> str:
-    """Translates a universal FieldModel into an Oracle-specific DDL type string.
-       e.g., returns "VARCHAR2(255 CHAR)" or "NUMBER(1, 0)"
+def python_to_oracle(column: Column) -> str:
+    """Translates a PYTHON_TYPES into an appropriate Oracle data type string for table creation.
     """
     ptype = column.properties.get("python_type", None)
     if ptype is None: raise ValueError(f"Column {column.name} is missing 'python_type' in properties.")
@@ -26,7 +26,7 @@ def python_to_oracle_ddl(column: Column) -> str:
     if ptype == "json": return "JSON"
     return "VARCHAR2(255 CHAR)"
 
-def map_python_to_oracledb_input_size(column: Column) -> Any:
+def python_to_oracledb_input_size(column: Column) -> Any:
     """Returns the appropriate type hint for oracledb.cursor.setinputsizes().
        This is critical for performance and preventing data truncation during inserts.
     """
@@ -44,20 +44,8 @@ def map_python_to_oracledb_input_size(column: Column) -> Any:
     return None
 
 
-# Legacy mapping.
-PythonTypes = Literal[
-    "string",
-    "integer",
-    "float",
-    "boolean",
-    "datetime", # datetime.datetime # timezone format
-    "date",     # datetime.date
-    "time",     # datetime.time
-    "byte",
-    "bytearray",
-    "json",     # dict or list
-]
-def oracle_to_python(raw_type: str, scale: int | None = None) -> PythonTypes:
+
+def oracle_to_python(raw_type: str, scale: int | None = None) -> PYTHON_TYPES:
     raw_upper = raw_type.upper()
     if raw_upper in ("VARCHAR2", "NVARCHAR2", "CHAR", "NCHAR", "CLOB", "NCLOB", "ROWID", "UROWID"): return "string"
     if raw_upper == "NUMBER":
