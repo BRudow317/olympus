@@ -4,7 +4,7 @@ import csv
 import io
 import os
 import sys
-from enum import Enum
+from enum import StrEnum
 from collections.abc import Iterator, Generator
 from typing import Literal 
     
@@ -12,7 +12,7 @@ from typing import Literal
 # https://developer.salesforce.com/docs/atlas.en-us.api_asynch.meta/api_asynch/datafiles_prepare_csv.htm
 # """
 
-class ColumnDelimiter(str, Enum):
+class ColumnDelimiter(StrEnum):
     BACKQUOTE = "BACKQUOTE"  # (`)
     CARET = "CARET"  # (^)
     COMMA = "COMMA"  # (,)
@@ -29,7 +29,7 @@ DELIMITERS: dict[str,str] = {
     ColumnDelimiter.TAB: "\t",
     }
 
-class LineEnding(str,Enum):
+class LineEnding(StrEnum):
     LF = "LF"
     CRLF = "CRLF"
 

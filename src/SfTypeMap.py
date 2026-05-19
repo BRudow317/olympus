@@ -2,47 +2,41 @@
 from __future__ import annotations
 import datetime, json, re
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any
 
-PythonTypes = Literal[
-    "string",
-    "integer",
-    "float",
-    "boolean",
-    "datetime",  # datetime.datetime
-    "date",      # datetime.date
-    "time",      # datetime.time
-    "byte",
-    "bytearray",
-    "json",      # dict or list
-]
+from src.PythonTypes import PythonTypes
 
 SF_TYPE_MAP: dict[str, PythonTypes] = {
-    'id':              'string',
-    'string':          'string',
-    'textarea':        'string',
-    'email':           'string',
-    'phone':           'string',
-    'url':             'string',
-    'encryptedstring': 'string',
-    'picklist':        'string',
-    'multipicklist':   'string',
-    'combobox':        'string',
-    'reference':       'string',
-    'anyType':         'string',
-    'int':             'integer',
-    'integer':         'integer',
-    'double':          'float',
-    'currency':        'float',
-    'percent':         'float',
-    'boolean':         'boolean',
-    'date':            'date',
-    'datetime':        'datetime',
-    'time':            'time',
-    'base64':          'byte',
-    'address':         'json',
-    'location':        'json',
+    'id':              PythonTypes.STRING,
+    'string':          PythonTypes.STRING,
+    'textarea':        PythonTypes.STRING,
+    'email':           PythonTypes.STRING,
+    'phone':           PythonTypes.STRING,
+    'url':             PythonTypes.STRING,
+    'encryptedstring': PythonTypes.STRING,
+    'picklist':        PythonTypes.STRING,
+    'multipicklist':   PythonTypes.STRING,
+    'combobox':        PythonTypes.STRING,
+    'reference':       PythonTypes.STRING,
+    'anytype':         PythonTypes.STRING,
+    'int':             PythonTypes.INTEGER,
+    'integer':         PythonTypes.INTEGER,
+    'double':          PythonTypes.FLOAT,
+    'currency':        PythonTypes.FLOAT,
+    'percent':         PythonTypes.FLOAT,
+    'boolean':         PythonTypes.BOOLEAN,
+    'date':            PythonTypes.DATE,
+    'datetime':        PythonTypes.DATETIME,
+    'time':            PythonTypes.TIME,
+    'base64':          PythonTypes.BYTE,
+    'complexvalue':    PythonTypes.JSON,
+    'address':         PythonTypes.JSON,
+    'location':        PythonTypes.JSON,
 }
+
+
+def sf_type_to_python(sf_type: str) -> PythonTypes | None:
+    return SF_TYPE_MAP.get(sf_type.lower())
 
 # FieldDefinition.DataType (bulk describe) → PythonTypes
 def _normalize_fielddef_type(raw: str) -> str:
@@ -52,40 +46,40 @@ def _normalize_fielddef_type(raw: str) -> str:
     return re.sub(r'\(.*\)', '', raw).strip().lower()
 
 SF_FIELDDEF_TYPE_MAP: dict[str, PythonTypes] = {
-    'id':                    'string',
-    'text':                  'string',
-    'textarea':              'string',
-    'longtextarea':          'string',
-    'html':                  'string',
-    'richtextarea':          'string',
-    'phone':                 'string',
-    'url':                   'string',
-    'email':                 'string',
-    'picklist':              'string',
-    'multi-select picklist': 'string',
-    'combobox':              'string',
-    'reference':             'string',
-    'autonumber':            'string',
-    'encryptedtext':         'string',
-    'hierarchy':             'string',
-    'anytype':               'string',
-    'number':                'float',
-    'currency':              'float',
-    'percent':               'float',
-    'double':                'float',
-    'integer':               'integer',
-    'long':                  'integer',
-    'checkbox':              'boolean',
-    'boolean':               'boolean',
-    'date':                  'date',
-    'date/time':             'datetime',
-    'datetime':              'datetime',
-    'time':                  'time',
-    'base64':                'byte',
-    'file':                  'byte',
-    'json':                  'json',
-    'address':               'json',
-    'location':              'json',
+    'id':                    PythonTypes.STRING,
+    'text':                  PythonTypes.STRING,
+    'textarea':              PythonTypes.STRING,
+    'longtextarea':          PythonTypes.STRING,
+    'html':                  PythonTypes.STRING,
+    'richtextarea':          PythonTypes.STRING,
+    'phone':                 PythonTypes.STRING,
+    'url':                   PythonTypes.STRING,
+    'email':                 PythonTypes.STRING,
+    'picklist':              PythonTypes.STRING,
+    'multi-select picklist': PythonTypes.STRING,
+    'combobox':              PythonTypes.STRING,
+    'reference':             PythonTypes.STRING,
+    'autonumber':            PythonTypes.STRING,
+    'encryptedtext':         PythonTypes.STRING,
+    'hierarchy':             PythonTypes.STRING,
+    'anytype':               PythonTypes.STRING,
+    'number':                PythonTypes.FLOAT,
+    'currency':              PythonTypes.FLOAT,
+    'percent':               PythonTypes.FLOAT,
+    'double':                PythonTypes.FLOAT,
+    'integer':               PythonTypes.INTEGER,
+    'long':                  PythonTypes.INTEGER,
+    'checkbox':              PythonTypes.BOOLEAN,
+    'boolean':               PythonTypes.BOOLEAN,
+    'date':                  PythonTypes.DATE,
+    'date/time':             PythonTypes.DATETIME,
+    'datetime':              PythonTypes.DATETIME,
+    'time':                  PythonTypes.TIME,
+    'base64':                PythonTypes.BYTE,
+    'file':                  PythonTypes.BYTE,
+    'json':                  PythonTypes.JSON,
+    'address':               PythonTypes.JSON,
+    'location':              PythonTypes.JSON,
 }
 
 

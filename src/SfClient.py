@@ -176,7 +176,6 @@ def fetch_client_credentials(
         raise RuntimeError("An unexpected error occurred while fetching client credentials.") from exc
 
 class SfClient:
-    """Sync HTTP client for Salesforce REST and Bulk 2.0 APIs."""
     base_url: str
     services_url: str
     access_token: str
@@ -209,8 +208,7 @@ class SfClient:
         self.services_url = f"{resolved_url}/services/data/v{api_version}"
         self.api_usage = {}
         self._max_retries = max_retries
-        # Credentials are captured in a closure so they are not stored as plain
-        # attributes on the instance, avoiding exposure via serialization or logging.
+        
         if consumer_key and consumer_secret:
             _ck, _cs, _url = consumer_key, consumer_secret, resolved_url
             self._token_refresher = lambda: fetch_client_credentials(
@@ -241,11 +239,6 @@ class SfClient:
         endpoint: str,
         **kwargs: Any,
     ) -> httpx.Response:
-        """
-        Execute a sync HTTP request.
-        Handles token refresh on 401 INVALID_SESSION_ID.
-        Full URL or relative endpoint both accepted.
-        """
         url = (
             endpoint
             if endpoint.startswith("https")

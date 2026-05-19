@@ -14,16 +14,16 @@ from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import quote_plus
 import httpx
-from sf.SfClient import SKIP_SUFFIXES, SKIP_NAMES, SF_BASE_URL, API_VERSION
+from src.SfClient import SKIP_SUFFIXES, SKIP_NAMES, SF_BASE_URL, API_VERSION
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from sf.SfClient import SfClient
+    from src.SfClient import SfClient
 
 class SfRest:
     """
     Global REST API operations - SOQL, limits, global describe.
-    Acts as a factory for RestSObject via dot-notation attribute access.
+    Acts as a factory for RestSObject via dot notation attribute access.
     """
     _http: SfClient
 
@@ -209,8 +209,6 @@ class RestSObject:
         )
         return response.json()
 
-    # --- CRUD ---
-
     def get(self, record_id: str, **kwargs: Any) -> dict[str, Any]:
         response = self._http.request(
             "GET", f"{self._base_endpoint}/{record_id}", **kwargs
@@ -265,8 +263,6 @@ class RestSObject:
         )
         return self._raw_response(response, raw_response)
 
-    # --- Deleted / Updated Ranges ---
-
     def deleted(
         self, start: datetime, end: datetime, **kwargs: Any
     ) -> dict[str, Any]:
@@ -286,8 +282,6 @@ class RestSObject:
         )
         response = self._http.request("GET", endpoint, **kwargs)
         return response.json()
-
-    # --- Base64 File Operations ---
 
     def upload_base64(
         self,
@@ -329,8 +323,6 @@ class RestSObject:
             **kwargs,
         )
         return response.content
-
-    # --- Utilities ---
 
     @staticmethod
     def _raw_response(response: httpx.Response, return_raw: bool) -> int | httpx.Response:

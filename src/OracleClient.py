@@ -17,10 +17,6 @@ from oracledb import (
     DbObject,
     MessageProperties,
 )
-from oracledb.connection import Xid
-
-
-
 
 class OracleClient:
     _oracle_user: str
@@ -44,7 +40,7 @@ class OracleClient:
         oracle_user: str = '',
         oracle_pass: str = '',
         oracle_host: str = '',
-        oracle_port: int | str = '0',
+        oracle_port: int | str = 1521,
         oracle_service: str = '',
     ) -> None:
         self._oracle_user = oracle_user
@@ -96,7 +92,6 @@ class OracleClient:
             raise
 
     def connect(self) -> oracledb.Connection:
-        """Return a healthy connection, reconnecting if necessary."""
         if self._current_connection is not None and self._current_connection.is_healthy():
             return self._current_connection
         self._new_connect()
@@ -174,11 +169,6 @@ class OracleClient:
         batcherrors: bool = True,
         batch_size: int = 1000,
     ) -> list[Any]:
-        """
-        Bulk DML over an iterable of named-bind dicts.
-        Returns a list of batch errors (empty on clean run).
-        Caller must call commit() after.
-        """
         all_errors: list[Any] = []
         batch: list[dict[str, Any]] = []
 
@@ -210,7 +200,6 @@ class OracleClient:
         binds: dict[str, Any] | None = None,
         fetch_size: int = 10_000,
     ) -> Iterator[dict[str, Any]]:
-        """Execute a SELECT and yield rows as dicts."""
         binds = binds or {}
         with self.connect().cursor() as cursor:
             cursor.arraysize = fetch_size

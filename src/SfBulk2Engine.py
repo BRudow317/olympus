@@ -14,10 +14,10 @@ import math
 from collections.abc import Iterator
 from typing import Any, TYPE_CHECKING, TypedDict, AnyStr
 
-from sf.SfClient import Operation, JobState, ColumnDelimiter, LineEnding, ResultsType
+from src.SfClient import Operation, JobState, ColumnDelimiter, LineEnding, ResultsType
 
 if TYPE_CHECKING:
-    from sf.SfClient import SfClient
+    from src.SfClient import SfClient
 
 MAX_INGEST_JOB_FILE_SIZE = 150 * 1024 * 1024   # 150 MB per job
 MAX_INGEST_JOB_PARALLELISM = 15
