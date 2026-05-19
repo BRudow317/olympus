@@ -1,13 +1,7 @@
-"""Oracle.py"""
+"""OracleDialect.py"""
 from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
-import os
-from typing import Any
-
-# from src.DTO import Records
-from src.models import Column
-from src.OracleTypeMap import oracle_to_python
 
 SQL_Schema_COLUMNS = """
 SELECT

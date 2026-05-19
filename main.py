@@ -18,8 +18,8 @@ def cmd_line():
     parser = argparse.ArgumentParser(prog=PROGRAM_NAME, add_help=True)
     parser.add_argument('--system', required=True, type=str,)
     parser.add_argument('--environment', required=True, type=str,)
-    parser.add_argument('--tables', required=False, type=str, default=[], nargs='+')
-    parser.add_argument('--limit', type=int, default=200)
+    parser.add_argument('--tables', required=False, type=str, default=['*'], nargs='+')
+    parser.add_argument('--limit', required=False, type=int, default=200)
     args: argparse.Namespace = parser.parse_args()
     
     result = 1
@@ -36,5 +36,5 @@ def cmd_line():
     return result
 
 if __name__ == '__main__':
-    
+    """clear; python "./boot.py" -v  -l ./.logs --env QBL  --exec ./main.py --system oracle --environment QBL --tables QBL_USER"""
     raise SystemExit(cmd_line())

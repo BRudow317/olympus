@@ -49,7 +49,6 @@ class PerAppUsage(NamedTuple):
     total: int
     name: str
 
-# --- Bulk API 2.0 Enums ---
 class Operation(str, Enum):
     insert = "insert"
     upsert = "upsert"

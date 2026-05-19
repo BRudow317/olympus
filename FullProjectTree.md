@@ -1,21 +1,20 @@
 Q:/olympus/
 ├── src/
-│   ├── models/
-│   │   └── dto.py
-│   ├── oracle/
-│   │   ├── __init__.py
-│   │   ├── OracleClient.py
-│   │   └── OracleTypeMap.py
-│   ├── sf/
-│   │   ├── __init__.py
-│   │   ├── csv_utils.py
-│   │   ├── SfBulk2Engine.py
-│   │   ├── SfClient.py
-│   │   ├── SfDialect.py
-│   │   ├── SfRestEngine.py
-│   │   └── SfTypeMap.py
 │   ├── __init__.py
-│   └── migrate.py
+│   ├── app.py
+│   ├── csv_utils.py
+│   ├── models.py
+│   ├── Oracle.py
+│   ├── OracleClient.py
+│   ├── OracleDialect.py
+│   ├── OracleTypeMap.py
+│   ├── PythonTypes.py
+│   ├── Salesforce.py
+│   ├── SfBulk2Engine.py
+│   ├── SfClient.py
+│   ├── SfDialect.py
+│   ├── SfRestEngine.py
+│   └── SfTypeMap.py
 ├── .gitignore
 ├── boot.py
 ├── FullProjectTree.md
