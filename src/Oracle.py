@@ -43,7 +43,7 @@ class Oracle(DataSource):
         _pass    = os.getenv(f"ORACLE_{environment}_PASS", "")
         _host    = os.getenv(f"ORACLE_{environment}_HOST", "")
         _port    = os.getenv(f"ORACLE_{environment}_PORT", 1521)
-        _service = os.getenv(f"ORACLE_{environment}_SERVICE", "")
+        _service = os.getenv(f"ORACLE_{environment}_SERVICE") or os.getenv(f"ORACLE_{environment}_SERVICE_NAME", "")
         if not all([_user, _pass, _host, _service]):
             raise ValueError(
                 f"Missing Oracle connection info for environment '{environment}'. "
@@ -140,11 +140,11 @@ class Oracle(DataSource):
     def query(self, statement: str, **kwargs) -> Records:
         return Records(data=self._client.query(statement, kwargs), code=200, message='ok')
 
-    def get_records(self, table: Table) -> Records:
+    def get_records(self, table: Table, limit: int = 200) -> Records:
         try:
             col_str = ", ".join(c.name for c in table.columns) if table.columns else "*"
-            sql     = f"SELECT {col_str} FROM {self._schema(table.namespace)}.{table.name}"
-            binds: dict[str, Any] = {}
+            sql     = f"SELECT {col_str} FROM {self._schema(table.namespace)}.{table.name} FETCH FIRST :limit ROWS ONLY"
+            binds: dict[str, Any] = {"limit": limit}
             data=self._client.query(sql, binds)
         
             return Records(data=data, code=200, message='ok')

@@ -12,7 +12,7 @@ if os.path.basename(os.path.dirname(__file__)) == 'src':
     PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 
 def main(**kwargs: Any):
-    app(**kwargs)
+    return app(**kwargs)
 
 def cmd_line():
     parser = argparse.ArgumentParser(prog=PROGRAM_NAME, add_help=True)
@@ -36,5 +36,5 @@ def cmd_line():
     return result
 
 if __name__ == '__main__':
-    """clear; python "./boot.py" -v  -l ./.logs --env QBL  --exec ./main.py --system oracle --environment QBL --tables QBL_USER"""
+    """clear; python "./boot.py" -v  -l ./.logs --env QBL  --exec ./main.py --system oracle --environment QBL --tables HTTP_CODES"""
     raise SystemExit(cmd_line())

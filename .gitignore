@@ -24,7 +24,8 @@ __pycache__
 .venv
 .pytest_cache
 pyrightconfig.json
-
+*.egg-info*
+*egg-info*
 
 # Environment files
 *secret*

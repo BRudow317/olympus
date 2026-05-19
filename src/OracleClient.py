@@ -147,8 +147,8 @@ class OracleClient:
         )
 
     @property
-    def current_schema(self) -> str:
-        return self.connect().current_schema
+    def current_schema(self) -> str | None:
+        return self.connect().current_schema or self.connect().username
 
     @current_schema.setter
     def current_schema(self, schema_name: str) -> None:
