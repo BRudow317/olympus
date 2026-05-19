@@ -143,7 +143,7 @@ def parse_config_file(config_path: str | Path = "", env: str = "") -> dict[str, 
     return resolved
 
 def get_args(argv) -> argparse.Namespace:
-    _env_help_msg=f"Environment (dev01, mmdev, sit01, etc...) NOTE: This is not for .env files, use --config for those."
+    _env_help_msg= f"Environment (dev01, mmdev, sit01, etc...) NOTE: This is not for .env files, use --config for those."
     _config_help_msg="Path to environment config file with key=value pairs. Values can reference other keys with $KEY or ${KEY} syntax, and can also reference environment variables. See README for details."
     _venv_help_msg = f"Path to venv for the child process (default: inherit caller's environment)"
     _verbose_help_msg = f"Enable debug logging (default: errors and info only)"

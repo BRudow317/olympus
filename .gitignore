@@ -25,6 +25,7 @@ __pycache__
 .pytest_cache
 pyrightconfig.json
 
+
 # Environment files
 *secret*
 *env*
