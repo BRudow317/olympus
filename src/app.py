@@ -4,8 +4,8 @@ import logging
 import json
 from typing import Any
 
-from src.Salesforce import Salesforce
-from src.Oracle import Oracle
+from sf.Salesforce import Salesforce
+from oracle.Oracle import Oracle
 from src.models import DataSource, System, Table
 
 logger = logging.getLogger(__name__)

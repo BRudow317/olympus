@@ -4,7 +4,7 @@ import datetime, json, re
 from decimal import Decimal
 from typing import Any
 
-from src.PythonTypes import PythonTypes
+from src.models import PythonTypes
 
 SF_TYPE_MAP: dict[str, PythonTypes] = {
     'id':              PythonTypes.STRING,

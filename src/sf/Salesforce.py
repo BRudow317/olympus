@@ -7,11 +7,11 @@ from collections.abc import Iterator
 from typing import Any
 
 from src.models import DataSource
-from src.SfBulk2Engine import Bulk2
-from src.SfRestEngine import SfRest
-from src.models import Column, Records, Schema, System, Table
-from src.SfClient import SKIP_NAMES, SKIP_SUFFIXES, SfClient
-from src.SfTypeMap import sf_type_to_python
+from sf.SfBulk2Engine import Bulk2
+from sf.SfRestEngine import SfRest
+from src.models import Column, Records, Schema, System, Table, PythonTypes
+from sf.SfClient import SKIP_NAMES, SKIP_SUFFIXES, SfClient
+from sf.SfTypeMap import sf_type_to_python
 
 def _build_column(field: dict[str, Any], position: int) -> Column:
     sf_type = field.get("type", "")

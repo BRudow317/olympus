@@ -7,9 +7,9 @@ from typing import Any
 
 # from src.DTO import Records
 from src.models import DataSource, Schema, Column, Table, System, Records
-from src.OracleClient import OracleClient
-from src.OracleTypeMap import oracle_to_python
-from src.OracleDialect import (
+from oracle.OracleClient import OracleClient
+from oracle.OracleTypeMap import oracle_to_python
+from oracle.OracleDialect import (
     SQL_Schema_COLUMNS,
     SQL_Schema_PKS,
     SQL_Schema_FKS,

@@ -14,11 +14,11 @@ from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import quote_plus
 import httpx
-from src.SfClient import SKIP_SUFFIXES, SKIP_NAMES, SF_BASE_URL, API_VERSION
+from sf.SfClient import SKIP_SUFFIXES, SKIP_NAMES, SF_BASE_URL, API_VERSION
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from src.SfClient import SfClient
+    from sf.SfClient import SfClient
 
 class SfRest:
     """
