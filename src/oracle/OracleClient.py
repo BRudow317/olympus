@@ -60,7 +60,7 @@ class OracleClient:
             f"port={self._oracle_port!r}, "
             f"service={self._oracle_service!r})"
         )
-
+    
     def _new_connect(self) -> None:
         try:
             if (
@@ -99,6 +99,9 @@ class OracleClient:
             raise RuntimeError(f"Failed to establish Oracle connection: {self.__repr__()}")
         return self._current_connection
 
+    def cursor(self, scrollable: bool = False) -> Cursor:
+        return Cursor(self.connect(), scrollable)
+
     def __call__(self) -> Connection:
         return self.connect()
 
@@ -124,35 +127,11 @@ class OracleClient:
                 f'Error during OracleClient cleanup: {self.__repr__()}\\nError: {e}'
             )
 
-    @property
-    def con_str(self) -> str:
-        return f"{self._oracle_user}/{self._oracle_pass}@{self._oracle_host}:{str(self._oracle_port)}/{self._oracle_service}"
-
-    def cursor(self, scrollable: bool = False) -> Cursor:
-        return Cursor(self.connect(), scrollable)
-
-    @property
-    def auto_commit(self) -> bool:
-        return self.connect().autocommit
-
-    @auto_commit.setter
-    def auto_commit(self, auto_commit: bool) -> None:
-        self.connect().autocommit = auto_commit
-
-    @property
     def is_healthy(self) -> bool:
         return (
             self._current_connection is not None
             and self._current_connection.is_healthy()
         )
-
-    @property
-    def current_schema(self) -> str | None:
-        return self.connect().current_schema or self.connect().username
-
-    @current_schema.setter
-    def current_schema(self, schema_name: str) -> None:
-        self.connect().current_schema = schema_name
 
     def commit(self) -> None:
         self.connect().commit()
@@ -194,28 +173,53 @@ class OracleClient:
 
         return all_errors
 
+    def json_factory(self, cursor: Cursor) -> Cursor:
+        desc = [d[0] for d in cursor.description or []]
+        cursor.rowfactory = lambda *row: dict(zip(desc, row))
+        return cursor
+
+    def lazy_query(
+        self,
+        statement: str,
+        binds: dict[str, Any] | None = None,
+        array_size: int | None = None,
+        batch_size: int = 10_000,
+    ) -> Iterator[dict[str, Any]]:
+        binds_ = binds or {}
+        cursor = self.cursor()
+        try:
+            cursor.arraysize = array_size or batch_size
+            cursor.execute(statement, binds_)
+            cursor = self.json_factory(cursor)
+            for row in cursor:
+                yield row
+        finally:
+            cursor.close()
+    
     def query(
         self,
-        sql: str,
+        statement: str,
         binds: dict[str, Any] | None = None,
-        fetch_size: int = 10_000,
-    ) -> Iterator[dict[str, Any]]:
-        binds = binds or {}
-        with self.connect().cursor() as cursor:
-            cursor.arraysize = fetch_size
-            cursor.execute(sql, binds)
-            if cursor.description:
-                columns = [str(col[0]) for col in cursor.description]
-                for row in cursor:
-                    yield dict(zip(columns, row))
+        array_size: int | None = None,
+        batch_size: int = 10_000,
+    ) -> list[dict[str, Any]]:
+        binds_ = binds or {}
+        cursor = self.cursor()
+        try:
+            cursor.arraysize = array_size or batch_size
+            cursor.execute(statement, binds_)
+            cursor = self.json_factory(cursor)
+            return cursor.fetchall()
+        finally:
+            cursor.close()
 
-    def execute_ddl(self, sql: str) -> None:
+    def execute(self, statement: str) -> None:
         """Execute a DDL statement (CREATE, ALTER, DROP)."""
         with self.connect().cursor() as cursor:
             try:
-                cursor.execute(sql)
+                cursor.execute(statement)
             except oracledb.Error as e:
-                logger.error("Oracle DDL failed: %s | %s", sql, e)
+                logger.error("Oracle DDL failed: %s | %s", statement, e)
                 raise
 
     def fetch_df_all(
@@ -281,6 +285,58 @@ class OracleClient:
         )
         return (cmpl_prc.returncode, cmpl_prc.stdout, cmpl_prc.stderr)
 
+    def get_all_schemas(self) -> list[Any]:
+        sql = """SELECT DISTINCT OWNER FROM ALL_TABLES"""
+        return self.query(sql)
+
+    def get_schema_constraints(self, schema: str, constraint_type: str = 'P') -> list[dict[str, str]]:
+        sql = """
+            SELECT
+                col.table_name,
+                col.column_name
+            FROM all_constraints con
+            JOIN all_cons_columns col
+                ON con.constraint_name = col.constraint_name
+                AND con.owner          = col.owner
+            WHERE con.constraint_type = :constraint_type
+              AND con.owner = :schema
+            """.strip()
+        binds = {
+            "schema": schema.upper(),
+            "constraint_type": constraint_type
+        }
+        return self.query(sql, binds)
+
+    def get_tables(self, schema: str) -> list[dict[str, str]]:
+        sql = """
+            SELECT *
+            FROM ALL_TABLES
+            WHERE OWNER = :schema
+        """
+        binds = {"schema": schema.upper()}
+        return self.query(sql, binds)
+
+    def get_columns(self, schema: str, table: str) -> list[dict[str, Any]]:
+        sql = """
+            SELECT
+                column_name,
+                data_type,
+                data_length,
+                data_precision,
+                data_scale,
+                nullable,
+                column_id,
+                default_length,
+                data_default
+            FROM all_tab_columns
+            WHERE OWNER = :owner AND TABLE_NAME = :table_name
+            ORDER BY column_id
+        """
+        binds = {"owner": schema.upper(), "table_name": table.upper()}
+
+        return self.query(sql, binds)
+
+    # region Misc Methods
     def cancel(self) -> None:
         self.connect().cancel()
 
@@ -341,6 +397,62 @@ class OracleClient:
             ip_address, grouping_class, grouping_value, grouping_type,
             name, client_initiated,
         )
+    # endregion
+
+    # region Properties
+    @property
+    def current_schema(self) -> str | None:
+        return self.connect().current_schema or self.connect().username
+
+    @current_schema.setter
+    def current_schema(self, schema_name: str) -> None:
+        self.connect().current_schema = schema_name
+
+    @property
+    def con_str(self) -> str:
+        return f"{self._oracle_user}/{self._oracle_pass}@{self._oracle_host}:{str(self._oracle_port)}/{self._oracle_service}"
+
+    @property
+    def username(self) -> str:
+        return self.connect().username
+
+    @property
+    def user(self) -> str:
+        return self._oracle_user
+    
+    @property
+    def host(self) -> str:
+        return self._oracle_host
+    
+    @property
+    def port(self) -> int:
+        return self._oracle_port
+    
+    @property
+    def service(self) -> str:
+        return self._oracle_service
+    
+    @property
+    def password(self) -> str:
+        return '*'*len(self._oracle_pass or "")
+
+
+
+
+
+
+
+
+
+
+    @property
+    def auto_commit(self) -> bool:
+        return self.connect().autocommit
+
+    @auto_commit.setter
+    def auto_commit(self, auto_commit: bool) -> None:
+        self.connect().autocommit = auto_commit
+
 
     @property
     def max_open_cursors(self) -> int:
@@ -353,10 +465,6 @@ class OracleClient:
     @property
     def is_thin(self) -> bool:
         return self.connect().thin
-
-    @property
-    def username(self) -> str:
-        return self.connect().username
 
     @property
     def version(self) -> str:
@@ -429,3 +537,5 @@ class OracleClient:
     @call_timeout.setter
     def call_timeout(self, value: int) -> None:
         self.connect().call_timeout = value
+
+    # endregion

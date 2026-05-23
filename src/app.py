@@ -1,63 +1,54 @@
-"""app.py"""
+#!/usr/bin/env python3
+"""main.py"""
 from __future__ import annotations
 import logging
-import json
-from typing import Any
+logger: logging.Logger = logging.getLogger(__name__)
+import os, argparse
+from typing import Any, Literal
+from src.seeding import seeding_test
 
-from sf.Salesforce import Salesforce
-from oracle.Oracle import Oracle
-from src.models import DataSource, System, Table
+PROGRAM_NAME: str = os.getenv(key="PROGRAM_NAME", default="Python ETL")
+PROJECT_ROOT: str = '.'
+if os.path.basename(os.path.dirname(__file__)) == 'src':
+    PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 
-logger = logging.getLogger(__name__)
+def main(**kwargs: Any) -> int:
+    return seeding_test(**kwargs)
 
+def cmd_line() -> Literal[0] | Literal[2]:
+    parser = argparse.ArgumentParser(prog=PROGRAM_NAME, add_help=True)
+    parser.add_argument('--source-system', required=True, type=str,)
+    parser.add_argument('--source-environment', required=True, type=str,)
+    parser.add_argument('--source-namespace', required=False, type=str,)
+    parser.add_argument('--target-system', required=True, type=str,)
+    parser.add_argument('--target-environment', required=True, type=str,)
+    parser.add_argument('--target-namespace', required=False, type=str,)
+    parser.add_argument('--tables', required=False, type=str, default=['*'], nargs='+')
+    args: argparse.Namespace = parser.parse_args()
 
-def _make_client(system: System, environment: str) -> DataSource:
-    if system == System.ORACLE:
-        return Oracle(environment)
-    return Salesforce(environment)
+    result = 1
 
+    try:
+        result: int = main(**vars(args))
+        if result == 0:
+            return result
+        raise Exception(f'{result}')
+    except KeyboardInterrupt:
+        return 2
+    except Exception as e:
+        raise e
+    return result
 
-def _serialize(record: dict[str, Any]) -> str:
-    return json.dumps(record, default=str)
-
-
-def fetch(
-    system: System,
-    environment: str,
-    namespace: str | None = None,
-    tables: list[str] = [],
-    limit: int = 200,
-) -> None:
-    source = _make_client(system, environment)
-
-    for table_name in tables:
-        stub = Table(name=table_name, system=system, namespace=namespace, environment=environment)
-
-        logger.info(f"Describing {system}.{table_name} ...")
-        described = source.describe_table(stub)
-        logger.info(f"  {len(described.columns)} columns: {[c.name for c in described.columns]}")
-
-        logger.info(f"Fetching records from {table_name} (limit={limit}) ...")
-        result = source.get_records(described, limit=limit)
-
-        if result.code != 200:
-            logger.error(f"  Error fetching {table_name}: {result.message}")
-            continue
-
-        count = 0
-        for record in result.data:
-            print(_serialize(record))
-            count += 1
-
-        logger.info(f"  {count} record(s) from {table_name}")
-
-
-def app(system: System, environment: str, tables: list[str], limit: int = 200) -> int:
-
-    fetch(
-        system=system,
-        environment=environment,
-        tables=tables,
-        limit=limit
-    )
-    return 0
+if __name__ == '__main__':
+    r"""
+    python "./main.py" -v -l ./.logs `
+    --exec ./app.py `
+        --source-system oracle `
+        --source-environment ADMIN `
+        --source-namespace QBL `
+        --target-system oracle `
+        --target-environment ADMIN `
+        --target-namespace DWH `
+        --tables MQ_LOOKUP
+    """
+    raise SystemExit(cmd_line())

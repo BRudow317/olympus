@@ -14,7 +14,7 @@ import math
 from collections.abc import Iterator
 from typing import Any, TYPE_CHECKING, TypedDict, AnyStr
 
-from sf.SfClient import Operation, JobState, ColumnDelimiter, LineEnding, ResultsType
+from sf.SfModels import Operation, JobState, ColumnDelimiter, LineEnding, ResultsType
 
 if TYPE_CHECKING:
     from sf.SfClient import SfClient

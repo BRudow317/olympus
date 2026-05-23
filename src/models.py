@@ -1,27 +1,30 @@
-"""dto.py"""
+"""models.py"""
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
-from enum import StrEnum 
+from typing import Any, Protocol, runtime_checkable, Generic, TypeVar
 from collections.abc import Iterator
+from enum import StrEnum
 
 class System(StrEnum):
     ORACLE = 'oracle'
     SALESFORCE = 'salesforce'
 
 class PythonTypes(StrEnum):
-     STRING = "string"
-     INTEGER = "integer"
-     FLOAT = "float"
-     BOOLEAN = "boolean"
-     DATETIME = "datetime" # datetime.datetime # timezone format
-     DATE = "date"     # datetime.date
-     TIME = "time"     # datetime.time
-     BYTE = "byte"
-     BYTEARRAY = "bytearray"
-     JSON = "json"     # dict or list
+    STRING = "string"
+    INTEGER = "integer"
+    FLOAT = "float"
+    BOOLEAN = "boolean"
+    DATETIME = "datetime" # datetime.datetime + timezone format
+    DATE = "date"       # datetime.date
+    TIME = "time"       # datetime.time
+    BYTE = "byte"
+    BYTEARRAY = "bytearray"
+    JSON = "json"       # dict or list
 
-@dataclass
+C = TypeVar("C", bound="Column")
+TABLE = TypeVar("TABLE", bound="Table")
+
+@dataclass(kw_only=True)
 class Column:
     name: str
     alias: str | None = None
@@ -33,7 +36,7 @@ class Column:
     is_read_only: bool = False
     is_compound_key: bool = False
     is_foreign_key: bool = False
-    foreign_key_mapping: dict[str, str] = field(default_factory=dict)  # {target_table: target_column}
+    foreign_key_mapping: dict[str, str] = field(default_factory=dict) # {target_table: target_column}
     is_foreign_key_enforced: bool = False
     max_length: int | None = None
     precision: int | None = None
@@ -50,26 +53,29 @@ class Column:
     is_indexed: bool = False
     description: str | None = None
 
-@dataclass
-class Table:
+@dataclass(kw_only=True)
+class Table(Generic[C]):
     name: str
     system: System
     environment: str | None = None
     alias: str | None = None
     namespace: str | None = None
     prefix: str | None = None
-    columns: list[Column] = field(default_factory=list)
+    columns: list[C] = field(default_factory=list)
     properties: dict[str, Any] = field(default_factory=dict)
+
     @property
-    def primary_key_columns(self) -> list[Column]:
+    def primary_key_columns(self) -> list[C]:
         return [f for f in self.columns if f.is_primary_key]
+
     @property
-    def column_map(self) -> dict[str, Column]:
+    def column_map(self) -> dict[str, C]:
         return {f.name: f for f in self.columns}
+
     @property
     def qualified_name(self) -> str:
         if self.namespace:
-            return ".".join([self.namespace, self.name])
+            return f"{self.namespace}.{self.name}"
         return self.name
 
 @dataclass
@@ -78,18 +84,19 @@ class Schema:
     environment: str | None = None
     system: System | None = None
     tables: list[Table] = field(default_factory=list)
-    code: int = 200
-    message: str = 'ok'
 
 @dataclass
 class Records:
     data: Iterator[dict[str, Any]] = field(default_factory=lambda: iter([]))
+    columns: list[Column] = field(default_factory=lambda: [])
     code: int = 200
     message: str = 'ok'
 
 @runtime_checkable
 class DataSource(Protocol):
-    def describe_schema(self, namespace: str | None = None, environment: str | None = None) -> Schema: ...
-    def describe_table(self, table: Table) -> Table: ...
+    def describe_schema(self, namespace: str | None = None) -> Schema: ...
+    def describe_table(self, table: Table[Any]) -> Table: ...
+    def mutate_table(self, table: Table[Any]) -> Table: ...
     def query(self, statement: str, **kwargs) -> Records: ...
     def get_records(self, table: Table, **kwargs) -> Records: ...
+    def load_records(self, action: str, table: Table, records: Records, **kwargs) -> None: ...

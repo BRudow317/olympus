@@ -1,133 +1,163 @@
-"""Oracle.py"""
+# src/oracle/Oracle.py
 from __future__ import annotations
-import logging
-logger = logging.getLogger(__name__)
 import os
+import logging
+logger: logging.Logger = logging.getLogger(__name__)
 from typing import Any
+from itertools import islice
+from collections.abc import Iterator
 
-# from src.DTO import Records
-from src.models import DataSource, Schema, Column, Table, System, Records
-from oracle.OracleClient import OracleClient
-from oracle.OracleTypeMap import oracle_to_python
-from oracle.OracleDialect import (
-    SQL_Schema_COLUMNS,
-    SQL_Schema_PKS,
-    SQL_Schema_FKS,
-    SQL_Schema_INDEXES,
-    SQL_Table_COLUMNS,
-    SQL_Table_PKS,
-    SQL_Table_FKS,
-    SQL_Table_INDEXES,
+import oracledb
+
+from src.models import DataSource, Schema, System, Records, Table, Column
+from src.oracle.OracleClient import OracleClient
+from src.oracle.OracleDialect import (
+    SQL_ALL_TAB_COLUMNS, SQL_SCHEMA_PKS, SQL_SCHEMA_FKS,
+    SQL_SCHEMA_INDEXES,
+    SQL_TABLE_COLUMNS, SQL_TABLE_PKS, SQL_TABLE_FKS, SQL_TABLE_INDEXES,
+    ORACLE_MAX_VARCHAR2_CHAR
 )
-
-
+from src.oracle.OracleTypeMap import oracle_to_python
+from src.oracle.OracleModels import OracleColumn, OracleTable
 
 class Oracle(DataSource):
-    _client: OracleClient
-    _default_schema: str | None
+    def __init__(self,
+                 environment: str,
+                 namespace: str | None = None
+                 ) -> None:
+        self._default_schema: str | None = namespace.upper() if namespace else None
+        self._construct_oracle_client(environment.upper())
 
-    def __init__(self, environment: str, schema: str | None = None) -> None:
-        self._default_schema = schema.upper() if schema else None
-        self._construct_oracle(environment)
+    def _construct_oracle_client(self, environment: str) -> None:
+        user: str = os.getenv(f"ORACLE_{environment.lower()}_USER") or os.getenv(f"ORACLE_{environment}_USER") or ""
+        pwd: str = os.getenv(f"ORACLE_{environment.lower()}_PASS") or os.getenv(f"ORACLE_{environment}_PASS") or ""
+        host: str = os.getenv(f"ORACLE_{environment.lower()}_HOST") or os.getenv(f"ORACLE_{environment}_HOST") or ""
+        port: str | int = os.getenv(f"ORACLE_{environment.lower()}_PORT") or os.getenv(f"ORACLE_{environment}_PORT") or 1521
+        svc: str = os.getenv(f"ORACLE_{environment.lower()}_SERVICE") or os.getenv(f"ORACLE_{environment}_SERVICE") or ""
+
+        if not all([user, pwd, host, svc]):
+            raise ValueError(f"Missing Oracle env vars for '{environment}'")
+
+        self._client = OracleClient(
+            oracle_user=user,
+            oracle_pass=pwd,
+            oracle_host=host,
+            oracle_port=int(port),
+            oracle_service=svc,
+        )
 
     def _schema(self, namespace: str | None = None) -> str:
-        return (namespace or self._default_schema or self._client.current_schema).upper()
+        return (
+            namespace
+            or self._default_schema
+            or self._client.current_schema
+            or self._client.user.upper()
+            or ""
+        ).upper()
 
-    def _binds(self, table: Table) -> dict[str, str]:
-        return {
-            "owner":      self._schema(table.namespace),
-            "table_name": table.name.upper(),
-        }
-    def _construct_oracle(self, environment: str) -> None:
-        _user    = os.getenv(f"ORACLE_{environment}_USER", "")
-        _pass    = os.getenv(f"ORACLE_{environment}_PASS", "")
-        _host    = os.getenv(f"ORACLE_{environment}_HOST", "")
-        _port    = os.getenv(f"ORACLE_{environment}_PORT", 1521)
-        _service = os.getenv(f"ORACLE_{environment}_SERVICE") or os.getenv(f"ORACLE_{environment}_SERVICE_NAME", "")
-        if not all([_user, _pass, _host, _service]):
-            raise ValueError(
-                f"Missing Oracle connection info for environment '{environment}'. "
-                f"Required: ORACLE_{environment}_USER, ORACLE_{environment}_PASS, "
-                f"ORACLE_{environment}_HOST, ORACLE_{environment}_SERVICE"
+    def to_oracle_table(self, table: Table | OracleTable) -> OracleTable:
+        if isinstance(table, Table) and not isinstance(table, OracleTable):
+            return OracleTable(
+                name=table.name,
+                system=table.system,
+                namespace=table.namespace,
+                environment=getattr(table, "environment", None),
+                columns=[OracleColumn(**vars(c)) for c in table.columns],
+                properties=table.properties.copy(),
             )
-        self._client = OracleClient(
-            oracle_user=_user,
-            oracle_pass=_pass,
-            oracle_host=_host,
-            oracle_port=int(_port) if _port else 1521,
-            oracle_service=_service,
+        else:
+            return table
+
+    def build_ora_column(self, row: dict[str, Any]) -> OracleColumn:
+        raw = str(row.get("DATA_TYPE") or "")
+        scale: int | None = int(row["DATA_SCALE"]) if row.get("DATA_SCALE") is not None else None
+        prec: int | None = int(row["DATA_PRECISION"]) if row.get("DATA_PRECISION") is not None else None
+        length: Any | None = row.get("CHAR_LENGTH") or row.get("DATA_LENGTH")
+        max_length: int | None = int(length) if length is not None else None
+
+        return OracleColumn(
+            name=str(row["COLUMN_NAME"]),
+            raw_type=raw,
+            python_type=oracle_to_python(raw, scale),
+            ordinal_position=int(row.get("COLUMN_ID") or 0),
+            precision=prec,
+            scale=scale,
+            max_length=max_length,
+            is_nullable=str(row.get("NULLABLE", "Y")) == "Y",
+            default_value=row.get("DATA_DEFAULT"),
         )
+
     def describe_schema(self, namespace: str | None = None) -> Schema:
-        schema = self._schema(namespace)
-        binds  = {"owner": schema}
+        sql = """SELECT DISTINCT TABLE_NAME FROM ALL_TABLES WHERE OWNER = :schema"""
+        schema: str = self._schema(namespace)
 
-        pk_set: dict[str, set[str]] = {}
-        for row in self._client.query(SQL_Schema_PKS, binds):
-            pk_set.setdefault(row["TABLE_NAME"], set()).add(row["COLUMN_NAME"])
+        table_names: list[Any] = sorted({
+            row["TABLE_NAME"]
+            for row in self._client.query(sql, {"schema": schema})
+        })
 
-        fk_map: dict[str, dict[str, dict[str, str]]] = {}
-        for row in self._client.query(SQL_Schema_FKS, binds):
-            fk_map.setdefault(row["TABLE_NAME"], {}).setdefault(
-                row["COLUMN_NAME"], {}
-            )[row["REF_TABLE"]] = row["REF_COLUMN"]
+        tables: list[Any] = []
+        for tbl in table_names:
+            t: Table[Any] = Table(name=tbl, system=System.ORACLE, namespace=schema)
+            full_table: Table[Any] = self.describe_table(t)
+            tables.append(full_table)
 
-        idx_map: dict[str, dict[str, bool]] = {}
-        for row in self._client.query(SQL_Schema_INDEXES, binds):
-            tbl, col = row["TABLE_NAME"], row["COLUMN_NAME"]
-            idx_map.setdefault(tbl, {})
-            idx_map[tbl][col] = idx_map[tbl].get(col, False) or (row["UNIQUENESS"] == "UNIQUE")
-
-        tables: dict[str, list[Column]] = {}
-        for row in self._client.query(SQL_Schema_COLUMNS, binds):
-            tbl = row["TABLE_NAME"]
-            col = self.build_column(row)
-            col.is_primary_key          = col.name in pk_set.get(tbl, set())
-            col.is_foreign_key          = col.name in fk_map.get(tbl, {})
-            col.foreign_key_mapping     = fk_map.get(tbl, {}).get(col.name, {})
-            col.is_foreign_key_enforced = col.is_foreign_key
-            col.is_indexed              = col.name in idx_map.get(tbl, {})
-            col.is_unique               = idx_map.get(tbl, {}).get(col.name, False)
-            tables.setdefault(tbl, []).append(col)
-
-        tables_list = [
-            Table(name=tbl, namespace=schema, system=System.ORACLE, columns=cols)
-            for tbl, cols in sorted(tables.items())
-        ]
-        return Schema(system=System.ORACLE, tables=tables_list, code=200, message='ok')
+        return Schema(
+            namespace=schema,
+            system=System.ORACLE,
+            tables=tables
+        )
 
     def describe_table(self, table: Table) -> Table:
+        ora_table: OracleTable = self.to_oracle_table(table)
+        binds: dict[str, str] = {"owner": self._schema(ora_table.namespace), "table_name" : ora_table.name}
+        col_filter: set[str] | None = {c.name.upper() for c in ora_table.columns} if ora_table.columns else None
 
-        binds      = self._binds(table)
-        col_filter = {c.name.upper() for c in table.columns} if table.columns else None
-
-        pk_set: set[str] = {
-            r["COLUMN_NAME"]
-            for r in self._client.query(SQL_Table_PKS, binds)
+        pk_set: set[Any] = {
+            r["COLUMN_NAME"] for r in self._client.query(SQL_TABLE_PKS, binds)
         }
 
         fk_map: dict[str, dict[str, str]] = {}
-        for r in self._client.query(SQL_Table_FKS, binds):
+        for r in self._client.query(SQL_TABLE_FKS, binds):
             fk_map.setdefault(r["COLUMN_NAME"], {})[r["REF_TABLE"]] = r["REF_COLUMN"]
 
         idx_map: dict[str, bool] = {}
-        for r in self._client.query(SQL_Table_INDEXES, binds):
-            col = r["COLUMN_NAME"]
-            idx_map[col] = idx_map.get(col, False) or (r["UNIQUENESS"] == "UNIQUE")
+        for r in self._client.query(SQL_TABLE_INDEXES, binds):
+            idx_map[r["COLUMN_NAME"]] = idx_map.get(r["COLUMN_NAME"], False) \
+                or (r["UNIQUENESS"] == "UNIQUE")
 
-        col_rows = [
-            r for r in self._client.query(SQL_Table_COLUMNS, binds)
+        col_rows: list[dict[str, Any]] = [
+            r for r in self._client.query(SQL_TABLE_COLUMNS, binds)
             if col_filter is None or r["COLUMN_NAME"] in col_filter
         ]
 
-        columns: list[Column] = []
+        columns: list[Any] = []
         for row in col_rows:
-            col = self.build_column(row)
-            col.is_primary_key          = col.name in pk_set
-            col.is_foreign_key          = col.name in fk_map
-            col.foreign_key_mapping     = fk_map.get(col.name, {})
-            col.is_foreign_key_enforced = col.is_foreign_key
-            col.is_indexed              = col.name in idx_map
-            col.is_unique               = idx_map.get(col.name, False)
+            col_name = str(row.get("COLUMN_NAME"))
+            raw = str(row.get("DATA_TYPE") or "")
+            scale: int | None = int(row["DATA_SCALE"]) if row.get("DATA_SCALE") is not None else None
+            prec: int | None = int(row["DATA_PRECISION"]) if row.get("DATA_PRECISION") is not None else None
+            length: Any | None = row.get("CHAR_LENGTH") or row.get("DATA_LENGTH")
+            max_length: int | None = int(length) if length is not None else None
+
+            col = OracleColumn(
+                name=col_name,
+                raw_type=raw,
+                python_type=oracle_to_python(raw, scale),
+                ordinal_position=int(row.get("COLUMN_ID") or 0),
+                precision=prec,
+                scale=scale,
+                max_length=max_length,
+                is_nullable=str(row.get("NULLABLE", "Y")) == "Y",
+                default_value=row.get("DATA_DEFAULT"),
+                is_primary_key = col_name in pk_set,
+                is_foreign_key = col_name in fk_map,
+                foreign_key_mapping = fk_map.get(col_name, {}),
+                is_indexed = col_name in idx_map,
+                is_unique = idx_map.get(col_name, False),
+                serialized_null_value = "NULL",
+            )
+            # col = self.build_ora_column(row)
             columns.append(col)
 
         return Table(
@@ -138,41 +168,236 @@ class Oracle(DataSource):
         )
 
     def query(self, statement: str, **kwargs) -> Records:
-        return Records(data=self._client.query(statement, kwargs), code=200, message='ok')
+        return Records(data=self._client.lazy_query(statement, kwargs))
 
-    def get_records(self, table: Table, limit: int = 200) -> Records:
+    def get_records(self, table: Table, **kwargs) -> Records:
+        # cursor = self._client.cursor()
         try:
             col_str = ", ".join(c.name for c in table.columns) if table.columns else "*"
-            sql     = f"SELECT {col_str} FROM {self._schema(table.namespace)}.{table.name} FETCH FIRST :limit ROWS ONLY"
-            binds: dict[str, Any] = {"limit": limit}
-            data=self._client.query(sql, binds)
-        
-            return Records(data=data, code=200, message='ok')
+            sql: str = f"SELECT {col_str} FROM {self._schema(table.namespace)}.{table.name}"
+
+            binds: dict[str, Any] = kwargs.get("binds") or {}
+            conditions: list[str] = [f"{k} = :{k}" for k in binds.keys()]
+            if conditions:
+                sql: str = f"{sql} WHERE {' AND '.join(conditions)}"
+
+            # columns = [col[0] for col in cursor.description or []]
+
+            data: Iterator[dict[str, Any]] = self._client.lazy_query(sql, binds)
+            return Records(data=data, columns=table.columns)
         except Exception as e:
             logger.error(f"Error in get_records: {e}")
             return Records(data=iter([]), code=500, message=str(e))
-    def build_column(self, row: dict[str, Any]) -> Column:
-        raw_type   = str(row.get("DATA_TYPE") or "")
-        scale_raw  = row.get("DATA_SCALE")
-        prec_raw   = row.get("DATA_PRECISION")
-        len_raw    = row.get("CHAR_LENGTH") or row.get("DATA_LENGTH")
 
-        scale      = int(scale_raw) if scale_raw is not None else None
-        precision  = int(prec_raw)  if prec_raw  is not None else None
-        max_length = int(len_raw)   if len_raw   is not None else None
-        
-        return Column(
-            name             = str(row["COLUMN_NAME"]),
-            raw_type         = raw_type,
-            python_type      = oracle_to_python(raw_type, scale),
-            ordinal_position = int(row.get("COLUMN_ID") or 0),
-            precision        = precision,
-            scale            = scale,
-            max_length       = max_length,
-            is_nullable      = str(row.get("NULLABLE", "Y")) == "Y",
-            default_value    = row.get("DATA_DEFAULT"),
-    )
+    def load_records(self,
+                     action: str,
+                     table: Table | OracleTable,
+                     records: Records | list[dict[str, Any]],
+                     batch_size = 50_000,
+                     **kwargs
+                     ) -> int:
 
-    
+        if isinstance(records, Records):
+            data = records.data
+        else:
+            data = records
 
-    
+        connection: oracledb.Connection = self._client.connect()
+        cursor: oracledb.Cursor = connection.cursor()
+        try:
+            oracle_table: OracleTable = self.to_oracle_table(table)
+            # self.mutate_table(oracle_table)
+            input_sizes: dict[str, Any] = self.get_input_sizes(oracle_table)
+            if input_sizes:
+                cursor.setinputsizes(**input_sizes)
+
+            if action == "insert":
+                statement: str = self.get_insert_sql(oracle_table)
+            elif action == "upsert":
+                statement: str = self.get_merge_sql(oracle_table)
+            elif action == "update":
+                statement: str = self.get_update_sql(oracle_table)
+            elif action == "reset":
+                self._client.execute(f"TRUNCATE TABLE {oracle_table.name}")
+                statement: str = self.get_insert_sql(oracle_table)
+            else:
+                raise RuntimeError(f"class Oracle, function: load_records, action: Unknown value entered: {action} ")
+
+            while True:
+                chunk = list(islice(iter(data), batch_size))
+                cursor.executemany(statement, chunk, batcherrors=True)
+                if not chunk:
+                    break
+
+                batch_errors: list[Any] = cursor.getbatcherrors()
+                if batch_errors:
+                    message = ""
+                    for err in batch_errors:
+                        message += f"\n{str(err)}"
+                    raise RuntimeError(message)
+        except Exception as e:
+            connection.rollback()
+            raise
+        finally:
+            cursor.close()
+        return 1
+
+    def get_input_sizes(self, table: OracleTable) -> dict[str, Any]:
+        if table.input_sizes_cache:
+            return table.input_sizes_cache
+
+        sizes  = {}
+        for col in table.columns:
+            bind_name: str = col.bind_name
+            if not col.raw_type:
+                continue
+
+            if col.raw_type in ("VARCHAR2", "NVARCHAR2", "CHAR"):
+                max_len: int = col.char_length or col.max_length or 4000
+                sizes[bind_name] = int(max_len)
+            elif col.raw_type in ("NUMBER", "FLOAT"):
+                sizes[bind_name] = oracledb.DB_TYPE_NUMBER
+            elif col.raw_type == "DATE":
+                sizes[bind_name] = oracledb.DB_TYPE_DATE
+            elif col.raw_type.startswith("TIMESTAMP"):
+                sizes[bind_name] = oracledb.DB_TYPE_TIMESTAMP
+            elif col.raw_type == "CLOB":
+                sizes[bind_name] = oracledb.DB_TYPE_LONG
+            elif col.raw_type == "BLOB":
+                sizes[bind_name] = oracledb.DB_TYPE_BLOB
+            elif col.raw_type == "RAW":
+                sizes[bind_name] = oracledb.DB_TYPE_RAW
+            elif col.raw_type == "JSON":
+                sizes[bind_name] = oracledb.DB_TYPE_JSON
+            else:
+                sizes[bind_name] = None
+
+        table.input_sizes_cache = sizes
+        return sizes
+
+    def get_insert_sql(self, table: OracleTable) -> str:
+        # if hasattr(table, "_insert_sql_stmt_cache") and table._insert_sql_stmt_cache:
+        #     return table._insert_sql_stmt_cache
+
+        cols: list[Any] = []
+        binds: list[Any] = []
+        for col in table.columns:
+            bn: str = col.bind_name
+            cols.append(bn)
+            binds.append(bn if bn.startswith(":") else f":{bn}")
+
+        statement: str = (
+            f"INSERT INTO {table.qualified_name} "
+            f"({', '.join(cols)}) VALUES ({', '.join(binds)})"
+        )
+        # table._insert_sql_stmt_cache = statement
+        return statement
+
+    def get_merge_sql(self, table: OracleTable) -> str:
+        pk_names: list[str] = [col.name for col in table.columns if col.is_primary_key]
+        data_names: list[str] = [col.name for col in table.columns if col.name not in pk_names]
+        all_cols: list[str] = pk_names + data_names
+
+        match_conds: str = " AND ".join([f"target.{col} = source.{col}" for col in pk_names])
+        update_assigns: str = ", ".join([f"target.{col} = source.{col}" for col in data_names])
+
+        insert_cols: str = ", ".join(all_cols)
+        source_cols: str = ", ".join([f"source.{col}" for col in all_cols])
+
+        # Notice we now use named binds matching the column names: :ID, :NAME, etc.
+        source_selects: str = ", ".join([f":{col} AS {col}" for col in all_cols])
+
+        return f"""
+        MERGE INTO {table.qualified_name} target
+        USING (SELECT {source_selects} FROM dual) source
+        ON ({match_conds})
+        WHEN MATCHED THEN
+            UPDATE SET {update_assigns}
+        WHEN NOT MATCHED THEN
+            INSERT ({insert_cols}) VALUES ({source_cols})
+        """.strip()
+
+    def get_update_sql(self, table: OracleTable) -> str:
+        pk_names: list[str] = [col.name for col in table.columns if col.is_primary_key]
+        data_names: list[str] = [col.name for col in table.columns if col.name not in pk_names]
+        update_assigns: str = ", ".join([f"{col} = :{i+1}" for i, col in enumerate(data_names)])
+        start_bind_idx: int = len(data_names) + 1
+        where_conds: str = " AND ".join([f"{col} = :{start_bind_idx + i}" for i, col in enumerate(pk_names)])
+
+        return f"""
+        UPDATE {table.qualified_name}
+        SET {update_assigns}
+        WHERE {where_conds}
+        """.strip()
+
+    def mutate_table(self, table: Table | OracleTable) -> Table:
+        ora_table: OracleTable = self.to_oracle_table(table)
+        while True:
+            fetched: list[dict[str, str]] = self._client.get_columns(
+                str(ora_table.namespace),
+                ora_table.name
+            )
+
+            # Build new table
+            if not fetched:
+                self.mutate_create_table(ora_table)
+                ora_table.clear_caches()
+                continue
+
+            db_col_map: dict[str, dict[str, str]] = {row["COLUMN_NAME"]: row for row in fetched}
+            new_cols: list[Any] = []
+
+            for col in ora_table.columns:
+                row: dict[str, str] | None = db_col_map.get(col.bind_name)
+                if not row:
+                    # new column
+                    col.oracle_name = col.alias
+                    col.is_new = True
+                    new_cols.append(col)
+                else:
+                    # existing column
+                    col.oracle_name = row["COLUMN_NAME"]
+                    col.raw_type = row["DATA_TYPE"]
+                    col.char_used = row.get("CHAR_USED")
+                    col.is_nullable = row.get("NULLABLE") == "Y"
+                    col.is_new = False
+
+                    cur_len = int(row.get("CHAR_LENGTH") or 0)
+                    if col.raw_type == "VARCHAR2" and col.effective_max_varchar2 > cur_len:
+                        col.char_length = cur_len
+                        self.mutate_existing_column(ora_table, col)
+                        ora_table.clear_caches()
+                        continue
+
+            if new_cols:
+                self.mutate_add_columns(ora_table, new_cols)
+                ora_table.clear_caches()
+                continue
+
+            break
+        return self.describe_table(ora_table)
+
+    def mutate_create_table(self, table: OracleTable) -> None:
+        col_defs: list[Any] = []
+        for col in table.columns:
+            col.oracle_name = col.alias
+            col.is_new = True
+            col_defs.append(col.column_definition())
+
+        sql: str = f"CREATE TABLE {table.qualified_name} ({', '.join(col_defs)})"
+        with self._client.connect().cursor() as cur:
+            cur.execute(sql)
+
+    def mutate_add_columns(self, table: OracleTable, new_columns: list[OracleColumn]) -> None:
+        col_defs: str = ", ".join(col.column_definition() for col in new_columns)
+        sql: str = f"ALTER TABLE {table.qualified_name} ADD ({col_defs})"
+        with self._client.connect().cursor() as cur:
+            cur.execute(sql)
+
+    def mutate_existing_column(self, table: OracleTable, col: OracleColumn) -> None:
+        sql: str = (
+            f"ALTER TABLE {table.qualified_name} "
+            f"MODIFY ({col.bind_name} VARCHAR2({col.effective_max_varchar2} CHAR))"
+        )
+        with self._client.connect().cursor() as cur:
+            cur.execute(sql)
