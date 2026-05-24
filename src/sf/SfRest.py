@@ -14,11 +14,11 @@ from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import quote_plus
 import httpx
-from sf.SfModels import SKIP_SUFFIXES, SKIP_NAMES, SF_BASE_URL, API_VERSION
+from src.sf.SfModels import SKIP_SUFFIXES, SKIP_NAMES, SF_BASE_URL
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from sf.SfClient import SfClient
+    from src.sf.SfClient import SfClient
 
 class Rest:
     """
@@ -102,7 +102,7 @@ class Rest:
         response = self._http.request("GET", endpoint, **kwargs)
         return response.json()
 
-    def query_all_iter(
+    def lazy_query(
         self,
         query_str: str,
         include_deleted: bool = False,
@@ -130,18 +130,18 @@ class Rest:
     ) -> dict[str, Any]:
         """
         Eagerly fetch all records across all pages into memory.
-        Use query_all_iter for large result sets.
+        Use lazy_query for large result sets.
         """
-        records = list(self.query_all_iter(query_str, include_deleted=include_deleted, **kwargs))
+        records = list(self.lazy_query(query_str, include_deleted=include_deleted, **kwargs))
         return {"records": records, "totalSize": len(records), "done": True}
 
     def describe_migratable(self, **kwargs: Any) -> list[dict[str, Any]]:
         """Global describe filtered to business-data objects only."""
         all_objects = self.describe(**kwargs).get("sobjects", [])
-        return [obj for obj in all_objects if self._is_migratable(obj)]
+        return [obj for obj in all_objects if self.is_migratable(obj)]
 
     @staticmethod
-    def _is_migratable(obj: dict[str, Any]) -> bool:
+    def is_migratable(obj: dict[str, Any]) -> bool:
         if not obj.get("queryable") or not obj.get("retrieveable"):
             return False
         if not obj.get("layoutable") and not obj.get("searchable"):

@@ -47,7 +47,7 @@ def to_oracle_snake(value: str, max_len: int = 128, reserved: Iterable[str] = OR
     s: str = re.sub(r'([A-Za-z])([0-9])', r'\1_\2', s)
     s: str = re.sub(r'([0-9])([A-Za-z])', r'\1_\2', s)
     s: str = re.sub(r'[^A-Za-z0-9_]+', '_', s)
-    s: str = re.sub(r'_+', '_', s)
+    # s: str = re.sub(r'_+', '_', s)
     s: str = s.strip('_').upper()
     if not s:
         return 'COL'

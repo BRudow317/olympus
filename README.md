@@ -1,6 +1,6 @@
 # olympus
 
-A Python library for reading data from Oracle and Salesforce behind a single common interface.
+A Python library for managing data from Oracle and Salesforce behind a single common interface.
 
 ---
 
@@ -9,34 +9,6 @@ A Python library for reading data from Oracle and Salesforce behind a single com
 Olympus wraps Oracle (oracledb) and Salesforce (REST + Bulk 2.0) behind a `DataSource` protocol.
 Any code that works with one works with the other. You can describe a schema, describe a table,
 run a raw query, or pull records -- all through the same four methods.
-
----
-
-## Project layout
-
-```
-src/
-  models.py          - DataSource protocol, Column, Table, Schema, Records dataclasses
-  PythonTypes.py     - System and PythonTypes enums (shared type vocabulary)
-
-  Oracle.py          - Oracle DataSource implementation
-  OracleClient.py    - thin oracledb connection wrapper
-  OracleDialect.py   - SQL strings for schema/table introspection
-  OracleTypeMap.py   - Oracle DB type -> PythonTypes mapping
-
-  Salesforce.py      - Salesforce DataSource implementation
-  SfClient.py        - httpx-based REST client, OAuth client credentials, token refresh
-  SfRestEngine.py    - SOQL query engine, global describe, SOSL search, limits, APEX, SObject CRUD
-  SfBulk2Engine.py   - Bulk API 2.0 ingest (insert, upsert, update, delete) and bulk query
-  SfDialect.py       - SOQL value quoting, escaping, and formatting utilities
-  SfTypeMap.py       - Salesforce field type -> PythonTypes mapping
-  csv_utils.py       - CSV split, count, and conversion helpers for Bulk API 2.0 file prep
-
-  app.py             - entry point: describe tables and fetch records
-
-tests/               - pytest test suite
-pyproject.toml       - project metadata and dependencies
-```
 
 ---
 
@@ -53,46 +25,40 @@ py -3.11 -m venv .venv
 
 ## Environment variables
 
-### Oracle
+``` shell
+ORAENV=$1
+SFENV=$2
+ORACLE_${ORAENV}_USER=myuser
+ORACLE_${ORAENV}_PASS=examplepassword123
+ORACLE_${ORAENV}_HOST=localhost
+ORACLE_${ORAENV}_PORT=1521
+ORACLE_${ORAENV}_SERVICE=exampledbservice
 
+SF_${SFENV}_CONSUMER_KEY=exampleconsumerkey123
+SF_${SFENV}_CONSUMER_SECRET=examplesecretkey123
+SF_${SFENV}_BASE_URL=https://some-trailheadorg-8eqg8r-dev-ed.trailblaze.my.salesforce.com
+SF_${SFENV}_API_VERSION=66.0
+SF_${SFENV}_AUTH_URI=/services/oauth2/token
+SF_${SFENV}_CALLBACK_URL=http://localhost:1717/OauthRedirect
 ```
-ORACLE_{ENV}_USER      database username
-ORACLE_{ENV}_PASS      database password
-ORACLE_{ENV}_HOST      host or IP
-ORACLE_{ENV}_PORT      port (default: 1521)
-ORACLE_{ENV}_SERVICE   service name
-```
-
-Replace `{ENV}` with your environment label, e.g. `ORACLE_PROD_USER`.
-
-### Salesforce
-
-```
-SF_{ENV}_BASE_URL        org URL, e.g. https://myorg.my.salesforce.com
-SF_{ENV}_CONSUMER_KEY    connected app client ID
-SF_{ENV}_CONSUMER_SECRET connected app client secret
-SF_{ENV}_API_VERSION     API version (default: 66.0)
-SF_{ENV}_MAX_RETRIES     token refresh retries (default: 1)
-```
-
-Replace `{ENV}` with your environment label, e.g. `SF_PROD_BASE_URL`.
 
 ---
 
 ## DataSource protocol
 
-Every data source exposes these four methods:
-
 ```python
+@runtime_checkable
 class DataSource(Protocol):
-    def describe_schema(self, namespace: str | None = None, environment: str | None = None) -> Schema: ...
-    def describe_table(self, table: Table) -> Table: ...
+    def describe_schema(self, namespace: str | None = None) -> Schema: ...
+    def describe_table(self, table: Table[Any]) -> Table: ...
+    def mutate_table(self, table: Table[Any]) -> Table: ...
     def query(self, statement: str, **kwargs) -> Records: ...
     def get_records(self, table: Table, **kwargs) -> Records: ...
+    def load_records(self, action: str, table: Table, records: Records, **kwargs) -> None: ...
 ```
 
 `Schema`, `Table`, and `Records` are plain dataclasses defined in `src/models.py`.
-`Column` carries type info (`python_type: PythonTypes`), key flags, FK mappings, and nullability.
+`Column` carries type info (`python_type: PythonTypes`)
 
 ---
 
@@ -126,24 +92,6 @@ excluded automatically by `describe_schema`.
 
 ---
 
-## Fetch records via app.py
-
-```python
-from src.app import fetch
-from src.models import System
-
-fetch(
-    system=System.SALESFORCE,
-    environment="PROD",
-    tables=["Account", "Contact"],
-    limit=100,
-)
-```
-
-Records are printed to stdout as newline-delimited JSON.
-
----
-
 ## PythonTypes
 
 All column types are normalized to a common vocabulary:
@@ -162,5 +110,5 @@ of the underlying raw type strings.
 ## Running tests
 
 ```
-.venv\Scripts\pytest
+./tests/
 ```

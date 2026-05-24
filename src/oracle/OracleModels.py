@@ -40,6 +40,10 @@ class OracleColumn(Column):
             type_clause = "TIMESTAMP"
         elif rt == "CLOB":
             type_clause = "CLOB"
+        elif rt == "BLOB":
+            type_clause = "BLOB"
+        elif rt == "JSON":
+            type_clause = "JSON"
         else:
             raise ValueError(
                 f"Unrecognized raw_type '{rt}' on column '{self.bind_name}'"

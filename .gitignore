@@ -26,6 +26,8 @@ __pycache__
 pyrightconfig.json
 *.egg-info*
 *egg-info*
+.coverage
+.coverage_html
 
 # Environment files
 *secret*

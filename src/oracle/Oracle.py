@@ -15,7 +15,7 @@ from src.oracle.OracleDialect import (
     SQL_ALL_TAB_COLUMNS, SQL_SCHEMA_PKS, SQL_SCHEMA_FKS,
     SQL_SCHEMA_INDEXES,
     SQL_TABLE_COLUMNS, SQL_TABLE_PKS, SQL_TABLE_FKS, SQL_TABLE_INDEXES,
-    ORACLE_MAX_VARCHAR2_CHAR
+    ORACLE_MAX_VARCHAR2_CHAR, to_oracle_snake,
 )
 from src.oracle.OracleTypeMap import oracle_to_python
 from src.oracle.OracleModels import OracleColumn, OracleTable
@@ -29,11 +29,11 @@ class Oracle(DataSource):
         self._construct_oracle_client(environment.upper())
 
     def _construct_oracle_client(self, environment: str) -> None:
-        user: str = os.getenv(f"ORACLE_{environment.lower()}_USER") or os.getenv(f"ORACLE_{environment}_USER") or ""
-        pwd: str = os.getenv(f"ORACLE_{environment.lower()}_PASS") or os.getenv(f"ORACLE_{environment}_PASS") or ""
-        host: str = os.getenv(f"ORACLE_{environment.lower()}_HOST") or os.getenv(f"ORACLE_{environment}_HOST") or ""
-        port: str | int = os.getenv(f"ORACLE_{environment.lower()}_PORT") or os.getenv(f"ORACLE_{environment}_PORT") or 1521
-        svc: str = os.getenv(f"ORACLE_{environment.lower()}_SERVICE") or os.getenv(f"ORACLE_{environment}_SERVICE") or ""
+        user: str = os.getenv(f"ORACLE_{environment}_USER") or os.getenv(f"ORACLE_{environment.lower()}_USER") or ""
+        pwd: str = os.getenv(f"ORACLE_{environment}_PASS") or os.getenv(f"ORACLE_{environment.lower()}_PASS") or ""
+        host: str = os.getenv(f"ORACLE_{environment}_HOST") or os.getenv(f"ORACLE_{environment.lower()}_HOST") or ""
+        port: str | int = os.getenv(f"ORACLE_{environment}_PORT") or os.getenv(f"ORACLE_{environment.lower()}_PORT") or 1521
+        svc: str = os.getenv(f"ORACLE_{environment}_SERVICE") or os.getenv(f"ORACLE_{environment.lower()}_SERVICE") or ""
 
         if not all([user, pwd, host, svc]):
             raise ValueError(f"Missing Oracle env vars for '{environment}'")
@@ -57,12 +57,21 @@ class Oracle(DataSource):
 
     def to_oracle_table(self, table: Table | OracleTable) -> OracleTable:
         if isinstance(table, Table) and not isinstance(table, OracleTable):
+            from src.oracle.OracleTypeMap import python_to_oracle
+            cols: list[OracleColumn] = []
+            for c in table.columns:
+                ora_raw = (
+                    python_to_oracle(c).split("(")[0].strip()
+                    if c.python_type is not None
+                    else c.raw_type
+                )
+                cols.append(OracleColumn(**{**vars(c), "raw_type": ora_raw}))
             return OracleTable(
                 name=table.name,
                 system=table.system,
                 namespace=table.namespace,
                 environment=getattr(table, "environment", None),
-                columns=[OracleColumn(**vars(c)) for c in table.columns],
+                columns=cols,
                 properties=table.properties.copy(),
             )
         else:
@@ -110,7 +119,7 @@ class Oracle(DataSource):
 
     def describe_table(self, table: Table) -> Table:
         ora_table: OracleTable = self.to_oracle_table(table)
-        binds: dict[str, str] = {"owner": self._schema(ora_table.namespace), "table_name" : ora_table.name}
+        binds: dict[str, str] = {"owner": self._schema(ora_table.namespace), "table_name": ora_table.name.upper()}
         col_filter: set[str] | None = {c.name.upper() for c in ora_table.columns} if ora_table.columns else None
 
         pk_set: set[Any] = {
@@ -137,7 +146,7 @@ class Oracle(DataSource):
             raw = str(row.get("DATA_TYPE") or "")
             scale: int | None = int(row["DATA_SCALE"]) if row.get("DATA_SCALE") is not None else None
             prec: int | None = int(row["DATA_PRECISION"]) if row.get("DATA_PRECISION") is not None else None
-            length: Any | None = row.get("CHAR_LENGTH") or row.get("DATA_LENGTH")
+            length: Any | None = None if raw in ("CLOB", "NCLOB") else (row.get("CHAR_LENGTH") or row.get("DATA_LENGTH"))
             max_length: int | None = int(length) if length is not None else None
 
             col = OracleColumn(
@@ -201,6 +210,7 @@ class Oracle(DataSource):
             data = records.data
         else:
             data = records
+        data = ({to_oracle_snake(k): v for k, v in row.items()} for row in data)
 
         connection: oracledb.Connection = self._client.connect()
         cursor: oracledb.Cursor = connection.cursor()
@@ -218,23 +228,24 @@ class Oracle(DataSource):
             elif action == "update":
                 statement: str = self.get_update_sql(oracle_table)
             elif action == "reset":
-                self._client.execute(f"TRUNCATE TABLE {oracle_table.name}")
+                self._client.execute(f"TRUNCATE TABLE {oracle_table.qualified_name}")
                 statement: str = self.get_insert_sql(oracle_table)
             else:
                 raise RuntimeError(f"class Oracle, function: load_records, action: Unknown value entered: {action} ")
-
+            
+            logger.debug(f"Executing action: {action} statement: {statement} with batch size: {batch_size}")
             while True:
                 chunk = list(islice(iter(data), batch_size))
-                cursor.executemany(statement, chunk, batcherrors=True)
                 if not chunk:
                     break
-
+                cursor.executemany(statement, chunk, batcherrors=True)
                 batch_errors: list[Any] = cursor.getbatcherrors()
                 if batch_errors:
                     message = ""
                     for err in batch_errors:
                         message += f"\n{str(err)}"
                     raise RuntimeError(message)
+            connection.commit()
         except Exception as e:
             connection.rollback()
             raise
@@ -320,9 +331,8 @@ class Oracle(DataSource):
     def get_update_sql(self, table: OracleTable) -> str:
         pk_names: list[str] = [col.name for col in table.columns if col.is_primary_key]
         data_names: list[str] = [col.name for col in table.columns if col.name not in pk_names]
-        update_assigns: str = ", ".join([f"{col} = :{i+1}" for i, col in enumerate(data_names)])
-        start_bind_idx: int = len(data_names) + 1
-        where_conds: str = " AND ".join([f"{col} = :{start_bind_idx + i}" for i, col in enumerate(pk_names)])
+        update_assigns: str = ", ".join([f"{col} = :{col}" for col in data_names])
+        where_conds: str = " AND ".join([f"{col} = :{col}" for col in pk_names])
 
         return f"""
         UPDATE {table.qualified_name}
@@ -332,6 +342,7 @@ class Oracle(DataSource):
 
     def mutate_table(self, table: Table | OracleTable) -> Table:
         ora_table: OracleTable = self.to_oracle_table(table)
+        ora_table.namespace = self._schema()
         while True:
             fetched: list[dict[str, str]] = self._client.get_columns(
                 str(ora_table.namespace),
@@ -348,10 +359,11 @@ class Oracle(DataSource):
             new_cols: list[Any] = []
 
             for col in ora_table.columns:
-                row: dict[str, str] | None = db_col_map.get(col.bind_name)
+                lookup_key = col.oracle_name or to_oracle_snake(col.name)
+                row: dict[str, str] | None = db_col_map.get(lookup_key)
                 if not row:
                     # new column
-                    col.oracle_name = col.alias
+                    col.oracle_name = to_oracle_snake(col.name)
                     col.is_new = True
                     new_cols.append(col)
                 else:
@@ -363,7 +375,7 @@ class Oracle(DataSource):
                     col.is_new = False
 
                     cur_len = int(row.get("CHAR_LENGTH") or 0)
-                    if col.raw_type == "VARCHAR2" and col.effective_max_varchar2 > cur_len:
+                    if col.raw_type == "VARCHAR2" and (col.max_length or 0) > cur_len:
                         col.char_length = cur_len
                         self.mutate_existing_column(ora_table, col)
                         ora_table.clear_caches()
@@ -375,12 +387,14 @@ class Oracle(DataSource):
                 continue
 
             break
-        return self.describe_table(ora_table)
+        return self.describe_table(
+            OracleTable(name=ora_table.name, system=System.ORACLE, namespace=ora_table.namespace)
+        )
 
     def mutate_create_table(self, table: OracleTable) -> None:
         col_defs: list[Any] = []
         for col in table.columns:
-            col.oracle_name = col.alias
+            col.oracle_name = to_oracle_snake(col.name)
             col.is_new = True
             col_defs.append(col.column_definition())
 

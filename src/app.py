@@ -41,14 +41,14 @@ def cmd_line() -> Literal[0] | Literal[2]:
 
 if __name__ == '__main__':
     r"""
-    python "./main.py" -v -l ./.logs `
-    --exec ./app.py `
-        --source-system oracle `
-        --source-environment ADMIN `
-        --source-namespace QBL `
-        --target-system oracle `
-        --target-environment ADMIN `
-        --target-namespace DWH `
-        --tables MQ_LOOKUP
+python "./main.py" -v -l ./.logs `
+    --exec ./src/app.py `
+    --source-system salesforce `
+    --source-environment TRAIL `
+    --source-namespace TRAIL `
+    --target-system oracle `
+    --target-environment DWH `
+    --target-namespace DWH `
+    --tables Contact Account
     """
     raise SystemExit(cmd_line())

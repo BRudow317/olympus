@@ -8,9 +8,8 @@ def python_to_oracle(column: Column) -> str:
     ptype = column.python_type or None
     if ptype is None: raise ValueError(f"Column {column.name} is missing 'python_type' in properties.")
     if ptype == PythonTypes.STRING:
-
-        length = column.max_length or 255
-        if length > 4000:
+        length = column.max_length
+        if length is None or length > 4000:
             return "CLOB"
         return f"VARCHAR2({length} CHAR)"
     if ptype == PythonTypes.INTEGER: return "NUMBER"
@@ -50,7 +49,7 @@ def oracle_to_python(raw_type: str, scale: int | None = None) -> PythonTypes:
         else: return PythonTypes.FLOAT
     if raw_upper in ("FLOAT", "BINARY_FLOAT", "BINARY_DOUBLE"): return PythonTypes.FLOAT
     if "TIMESTAMP" in raw_upper: return PythonTypes.DATETIME
-    if raw_upper == "DATE": return PythonTypes.DATETIME
+    if raw_upper == "DATE": return PythonTypes.DATE
     if raw_upper in ("BLOB", "RAW", "LONG RAW", "BFILE"): return PythonTypes.BYTE
     if raw_upper == "JSON": return PythonTypes.JSON
     return PythonTypes.STRING

@@ -21,3 +21,16 @@ dependencies = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+cache_dir = ".pytest_cache"
+addopts = "--cov=src --cov-report=term-missing --cov-report=html:tests/.coverage_html"
+
+[tool.coverage.run]
+source = ["src"]
+data_file = "tests/.coverage"
+omit = ["**/__pycache__/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+]

@@ -9,6 +9,10 @@ class System(StrEnum):
     ORACLE = 'oracle'
     SALESFORCE = 'salesforce'
 
+class SystemPrefix(StrEnum):
+    ORACLE = 'ora'
+    SALESFORCE = 'sf'
+
 class PythonTypes(StrEnum):
     STRING = "string"
     INTEGER = "integer"

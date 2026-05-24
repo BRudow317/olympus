@@ -35,7 +35,7 @@ class LineEnding(StrEnum):
 
 LINE_ENDINGS: dict[str,str] = {LineEnding.LF: "\n", LineEnding.CRLF: "\r\n"}
 
-QUOTING_TYPE = Literal[0, 1, 2, 3, 4, 5]
+QUOTING_TYPE = Literal[0, 1, 2, 3]
 
 MAX_INGEST_JOB_FILE_SIZE = 100 * 1024 * 1024
 MAX_INGEST_JOB_PARALLELISM = 10  # TODO: ? Salesforce limits
@@ -51,9 +51,6 @@ def split_csv(
         ) -> Generator[tuple[int, str], None, None]:
     """Split a CSV file into chunks to avoid exceeding the Salesforce
     bulk 2.0 API limits.
-    Arguments:
-        * filename -- csv file
-        * max_records -- the number of records per chunk, None for auto size
     """
     total_records = count_csv(filename=filename,
                                skip_header=True,
@@ -144,7 +141,6 @@ def count_csv(
         column_delimiter: ColumnDelimiter = ColumnDelimiter.COMMA,
         quoting: QUOTING_TYPE = csv.QUOTE_MINIMAL
         ) -> int:
-    """Count the number of records in a CSV file."""
     dl = DELIMITERS[column_delimiter]
     le = LINE_ENDINGS[line_ending]
     if filename:
@@ -172,14 +168,12 @@ def convert_dict_to_csv(
         quoting: QUOTING_TYPE = csv.QUOTE_MINIMAL,
         sort_keys: bool = False,
         ) -> str | None:
-    """Converts list of dicts to CSV string. Returns None if data is empty."""
     if not data:
         return None
     dl = DELIMITERS[column_delimiter]
     le = LINE_ENDINGS[line_ending]
-    keys = set(i for s in [d.keys() for d in data] for i in s)
-    if sort_keys:
-        keys = list(sorted(keys))
+    key_set: set[str] = {k for d in data for k in d}
+    keys: list[str] = sorted(key_set) if sort_keys else list(key_set)
     dict_to_csv_file = io.StringIO()
     writer = csv.DictWriter(dict_to_csv_file,
                             fieldnames=keys,

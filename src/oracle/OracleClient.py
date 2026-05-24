@@ -322,6 +322,8 @@ class OracleClient:
                 column_name,
                 data_type,
                 data_length,
+                char_length,
+                char_used,
                 data_precision,
                 data_scale,
                 nullable,
