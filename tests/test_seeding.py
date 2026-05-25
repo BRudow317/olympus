@@ -1,4 +1,4 @@
-"""test_seeding.py - End-to-end CLI seeding pipeline tests."""
+"""test_seeding.py"""
 from __future__ import annotations
 
 import datetime
@@ -12,8 +12,7 @@ import pytest
 
 from src.oracle.Oracle import Oracle
 
-# ─── DDL ─────────────────────────────────────────────────────────────────────
-
+# DDL 
 _DDL_ORA_SEED = """
 CREATE TABLE {schema}.PYTEST_SEED (
     ID          NUMBER(10)          NOT NULL,
@@ -29,8 +28,7 @@ CREATE TABLE {schema}.PYTEST_SEED (
 )
 """
 
-# ─── helpers ─────────────────────────────────────────────────────────────────
-
+# helpers 
 def _run_cli(*args: str) -> None:
     result = subprocess.run(
         [sys.executable, "src/app.py", *args],
@@ -74,7 +72,7 @@ def _table_exists(ora: Oracle, table: str) -> bool:
     return bool(rows)
 
 
-# ─── shared Oracle connections ────────────────────────────────────────────────
+# shared Oracle connections 
 
 @pytest.fixture(scope="module")
 def qbl() -> Oracle:
@@ -86,7 +84,7 @@ def dwh() -> Oracle:
     return Oracle("DWH", "DWH")
 
 
-# ─── SF → Oracle ─────────────────────────────────────────────────────────────
+# SF → Oracle 
 
 class TestSfToOracleSeeding:
     """
@@ -117,8 +115,7 @@ class TestSfToOracleSeeding:
         _drop(dwh, "SF_CONTACT")
         _drop(dwh, "SF_ACCOUNT")
 
-    # ── table creation ────────────────────────────────────────────────────────
-
+    # table creation 
     def test_contact_table_created(self, dwh: Oracle) -> None:
         assert _table_exists(dwh, "SF_CONTACT")
 
@@ -131,48 +128,43 @@ class TestSfToOracleSeeding:
     def test_account_has_rows(self, dwh: Oracle) -> None:
         assert _count(dwh, "SF_ACCOUNT") >= 0
 
-    # ── SF 'id' / 'string' → VARCHAR2 ────────────────────────────────────────
-
+    # SF 'id' / 'string' → VARCHAR2 
     def test_contact_id_field_maps_to_varchar2(self, dwh: Oracle) -> None:
         assert _catalog_col(dwh, "SF_CONTACT", "ID")["DATA_TYPE"] == "VARCHAR2"
 
     def test_contact_string_field_maps_to_varchar2(self, dwh: Oracle) -> None:
         assert _catalog_col(dwh, "SF_CONTACT", "LAST_NAME")["DATA_TYPE"] == "VARCHAR2"
 
-    # ── SF 'reference' (lookup) → VARCHAR2 ───────────────────────────────────
-
+    # SF 'reference' (lookup) → VARCHAR2 
     def test_contact_reference_field_maps_to_varchar2(self, dwh: Oracle) -> None:
         assert _catalog_col(dwh, "SF_CONTACT", "ACCOUNT_ID")["DATA_TYPE"] == "VARCHAR2"
 
-    # ── SF 'picklist' → VARCHAR2 ──────────────────────────────────────────────
-
+    # SF 'picklist' → VARCHAR2 
     def test_account_picklist_field_maps_to_varchar2(self, dwh: Oracle) -> None:
         assert _catalog_col(dwh, "SF_ACCOUNT", "INDUSTRY")["DATA_TYPE"] == "VARCHAR2"
 
-    # ── SF 'url' → VARCHAR2 ───────────────────────────────────────────────────
-
+    # SF 'url' → VARCHAR2 
     def test_account_url_field_maps_to_varchar2(self, dwh: Oracle) -> None:
         assert _catalog_col(dwh, "SF_ACCOUNT", "WEBSITE")["DATA_TYPE"] == "VARCHAR2"
 
-    # ── SF 'textarea' (length > 4000) → CLOB ─────────────────────────────────
-
+    # SF 'textarea' (length > 4000) → CLOB 
     def test_contact_textarea_maps_to_clob(self, dwh: Oracle) -> None:
         assert _catalog_col(dwh, "SF_CONTACT", "DESCRIPTION")["DATA_TYPE"] == "CLOB"
 
     def test_account_textarea_maps_to_clob(self, dwh: Oracle) -> None:
         assert _catalog_col(dwh, "SF_ACCOUNT", "DESCRIPTION")["DATA_TYPE"] == "CLOB"
 
-    # ── SF 'boolean' → NUMBER ─────────────────────────────────────────────────
+    # SF 'boolean' → NUMBER 
 
     def test_contact_boolean_field_maps_to_number(self, dwh: Oracle) -> None:
         assert _catalog_col(dwh, "SF_CONTACT", "DO_NOT_CALL")["DATA_TYPE"] == "NUMBER"
 
-    # ── SF 'date' → DATE ──────────────────────────────────────────────────────
+    # SF 'date' → DATE 
 
     def test_contact_date_field_maps_to_date(self, dwh: Oracle) -> None:
         assert _catalog_col(dwh, "SF_CONTACT", "BIRTHDATE")["DATA_TYPE"] == "DATE"
 
-    # ── SF 'datetime' → TIMESTAMP ─────────────────────────────────────────────
+    # SF 'datetime' → TIMESTAMP 
 
     def test_contact_datetime_field_maps_to_timestamp(self, dwh: Oracle) -> None:
         assert _catalog_col(dwh, "SF_CONTACT", "LAST_MODIFIED_DATE")["DATA_TYPE"].startswith("TIMESTAMP")
@@ -180,18 +172,15 @@ class TestSfToOracleSeeding:
     def test_account_datetime_field_maps_to_timestamp(self, dwh: Oracle) -> None:
         assert _catalog_col(dwh, "SF_ACCOUNT", "LAST_MODIFIED_DATE")["DATA_TYPE"].startswith("TIMESTAMP")
 
-    # ── SF 'currency' (FLOAT path) → NUMBER ───────────────────────────────────
-
+    # SF 'currency' (FLOAT path) → NUMBER 
     def test_account_currency_field_maps_to_number(self, dwh: Oracle) -> None:
         assert _catalog_col(dwh, "SF_ACCOUNT", "ANNUAL_REVENUE")["DATA_TYPE"] == "NUMBER"
 
-    # ── SF 'int' (INTEGER path) → NUMBER ─────────────────────────────────────
-
+    # SF 'int' (INTEGER path) → NUMBER 
     def test_account_int_field_maps_to_number(self, dwh: Oracle) -> None:
         assert _catalog_col(dwh, "SF_ACCOUNT", "NUMBER_OF_EMPLOYEES")["DATA_TYPE"] == "NUMBER"
 
-    # ── cross-system name resolution ──────────────────────────────────────────
-
+    # cross-system name resolution 
     def test_contact_table_has_sf_prefix(self, dwh: Oracle) -> None:
         assert _table_exists(dwh, "SF_CONTACT")
         assert not _table_exists(dwh, "CONTACT")
@@ -200,8 +189,7 @@ class TestSfToOracleSeeding:
         assert _table_exists(dwh, "SF_ACCOUNT")
         assert not _table_exists(dwh, "ACCOUNT")
 
-    # ── idempotency ───────────────────────────────────────────────────────────
-
+    # idempotency 
     def test_sf_to_oracle_is_idempotent(self, dwh: Oracle) -> None:
         count_before = _count(dwh, "SF_CONTACT")
         _run_cli(
@@ -216,22 +204,21 @@ class TestSfToOracleSeeding:
         assert _count(dwh, "SF_CONTACT") == count_before
 
 
-# ─── Oracle → Oracle ─────────────────────────────────────────────────────────
-
+# Oracle → Oracle 
 class TestOracleToOracleSeeding:
     """
     Seeds QBL.PYTEST_SEED → DWH.PYTEST_SEED via the CLI.
 
     The source table exercises every Oracle native type that has a distinct
     python_type mapping:
-      NUMBER(n,0)  → INTEGER → NUMBER
-      NUMBER(n,s)  → FLOAT   → NUMBER
-      NUMBER(1,0)  → INTEGER → NUMBER  (boolean-by-convention)
-      VARCHAR2     → STRING  → VARCHAR2
-      CLOB         → STRING  → CLOB    (max_length=None triggers CLOB path)
-      DATE         → DATE    → DATE
+      NUMBER(n,0)  → INTEGER  → NUMBER
+      NUMBER(n,s)  → FLOAT    → NUMBER
+      NUMBER(1,0)  → INTEGER  → NUMBER  (boolean-by-convention)
+      VARCHAR2     → STRING   → VARCHAR2
+      CLOB         → STRING   → CLOB    (max_length=None triggers CLOB path)
+      DATE         → DATE     → DATE
       TIMESTAMP    → DATETIME → TIMESTAMP
-      BLOB         → BYTE    → BLOB
+      BLOB         → BYTE     → BLOB
     """
 
     @pytest.fixture(scope="class", autouse=True)
@@ -264,16 +251,14 @@ class TestOracleToOracleSeeding:
         for ora in (dwh, qbl):
             _drop(ora, "PYTEST_SEED")
 
-    # ── structural ────────────────────────────────────────────────────────────
-
+    # structural 
     def test_target_table_created(self, dwh: Oracle) -> None:
         assert _table_exists(dwh, "PYTEST_SEED")
 
     def test_row_count_matches_source(self, qbl: Oracle, dwh: Oracle) -> None:
         assert _count(dwh, "PYTEST_SEED") == _count(qbl, "PYTEST_SEED")
 
-    # ── type round-trips ──────────────────────────────────────────────────────
-
+    # type round-trips 
     def test_varchar2_round_trips(self, dwh: Oracle) -> None:
         assert _catalog_col(dwh, "PYTEST_SEED", "LABEL")["DATA_TYPE"] == "VARCHAR2"
 
@@ -298,8 +283,7 @@ class TestOracleToOracleSeeding:
     def test_blob_round_trips(self, dwh: Oracle) -> None:
         assert _catalog_col(dwh, "PYTEST_SEED", "PAYLOAD")["DATA_TYPE"] == "BLOB"
 
-    # ── data integrity ────────────────────────────────────────────────────────
-
+    # data integrity 
     def test_varchar2_data_survives_transit(self, dwh: Oracle) -> None:
         rows = dwh._client.query("SELECT LABEL FROM DWH.PYTEST_SEED WHERE ID = 1")
         assert rows[0]["LABEL"] == "Alpha"
@@ -324,8 +308,7 @@ class TestOracleToOracleSeeding:
         assert rows[0]["SCORE"] is None
         assert rows[0]["BORN_ON"] is None
 
-    # ── idempotency ───────────────────────────────────────────────────────────
-
+    # idempotency 
     def test_oracle_to_oracle_is_idempotent(self, qbl: Oracle, dwh: Oracle) -> None:
         count_before = _count(dwh, "PYTEST_SEED")
         _run_cli(

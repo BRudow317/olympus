@@ -23,7 +23,6 @@ __pycache__
 .bin
 .venv
 .pytest_cache
-pyrightconfig.json
 *.egg-info*
 *egg-info*
 .coverage

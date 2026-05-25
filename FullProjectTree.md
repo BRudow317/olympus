@@ -1,22 +1,30 @@
 Q:/olympus/
 ├── src/
+│   ├── oracle/
+│   │   ├── Oracle.py
+│   │   ├── OracleClient.py
+│   │   ├── OracleDialect.py
+│   │   ├── OracleModels.py
+│   │   └── OracleTypeMap.py
+│   ├── sf/
+│   │   ├── csv_utils.py
+│   │   ├── Salesforce.py
+│   │   ├── SfBulk2.py
+│   │   ├── SfClient.py
+│   │   ├── SfDialect.py
+│   │   ├── SfModels.py
+│   │   ├── SfRest.py
+│   │   └── SfTypeMap.py
 │   ├── __init__.py
 │   ├── app.py
-│   ├── csv_utils.py
 │   ├── models.py
-│   ├── Oracle.py
-│   ├── OracleClient.py
-│   ├── OracleDialect.py
-│   ├── OracleTypeMap.py
-│   ├── PythonTypes.py
-│   ├── Salesforce.py
-│   ├── SfBulk2Engine.py
-│   ├── SfClient.py
-│   ├── SfDialect.py
-│   ├── SfRestEngine.py
-│   └── SfTypeMap.py
+│   └── seeding.py
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py
+│   ├── test_oracle.py
+│   └── test_seeding.py
 ├── .gitignore
-├── boot.py
 ├── FullProjectTree.md
 ├── LICENSE
 ├── main.py
