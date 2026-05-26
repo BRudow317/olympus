@@ -11,8 +11,8 @@ import oracledb
 
 from src.models import DataSource, Schema, System, Records, Table, Column
 from src.oracle.OracleClient import OracleClient
-from src.oracle.OracleTypeMap import oracle_to_python, python_to_oracle #, raw_type_to_oracledb_input_size
-from src.oracle.OracleModels import OracleColumn, OracleTable, to_oracle_snake
+from src.oracle.OracleTypeMap import oracle_to_python #, python_to_oracle #, raw_type_to_oracledb_input_size
+from src.oracle.OracleModels import OracleColumn, OracleTable, to_oracle_snake, to_oracle_table
 
 SQL_ALL_TAB_COLUMNS = """
 SELECT
@@ -180,27 +180,6 @@ class Oracle(DataSource):
             or ""
         ).upper()
 
-    def to_oracle_table(self, table: Table | OracleTable) -> OracleTable:
-        if isinstance(table, Table) and not isinstance(table, OracleTable):
-            cols: list[OracleColumn] = []
-            for c in table.columns:
-                ora_raw = (
-                    python_to_oracle(c).split("(")[0].strip()
-                    if c.python_type is not None
-                    else c.raw_type
-                )
-                cols.append(OracleColumn(**{**vars(c), "raw_type": ora_raw}))
-            return OracleTable(
-                name=table.name,
-                system=table.system,
-                namespace=table.namespace,
-                environment=getattr(table, "environment", None),
-                columns=cols,
-                properties=table.properties.copy(),
-            )
-        else:
-            return table
-
     def describe_schema(self, namespace: str | None = None) -> Schema:
         sql = """SELECT DISTINCT TABLE_NAME FROM ALL_TABLES WHERE OWNER = :schema"""
         schema: str = self._schema(namespace)
@@ -223,7 +202,7 @@ class Oracle(DataSource):
         )
 
     def describe_table(self, table: Table) -> Table:
-        ora_table: OracleTable = self.to_oracle_table(table)
+        ora_table: OracleTable = to_oracle_table(table)
         binds: dict[str, str] = {"owner": self._schema(ora_table.namespace), "table_name": ora_table.name.upper()}
         col_filter: set[str] | None = (
             {c.oracle_name or to_oracle_snake(c.name) for c in ora_table.columns}
@@ -322,7 +301,7 @@ class Oracle(DataSource):
         connection: oracledb.Connection = self._client.connect()
         cursor: oracledb.Cursor = connection.cursor()
         try:
-            oracle_table: OracleTable = self.to_oracle_table(table)
+            oracle_table: OracleTable = to_oracle_table(table)
             # self.mutate_table(oracle_table)
             input_sizes: dict[str, Any] = oracle_table.column_input_sizes()
             if input_sizes:
@@ -362,7 +341,7 @@ class Oracle(DataSource):
 
 
     def mutate_table(self, table: Table | OracleTable) -> Table:
-        ora_table: OracleTable = self.to_oracle_table(table)
+        ora_table: OracleTable = to_oracle_table(table)
         ora_table.namespace = self._schema()
         while True:
             fetched: list[dict[str, str]] = self._client.all_tab_columns(

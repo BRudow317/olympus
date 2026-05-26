@@ -73,6 +73,29 @@ def to_oracle_snake(
             s: str = s[:max_len].rstrip('_')
     return s if s else optional_suffix
 
+def to_oracle_table(table: Table | OracleTable) -> OracleTable:
+    from src.oracle.OracleTypeMap import python_to_oracle
+    if isinstance(table, Table) and not isinstance(table, OracleTable):
+        cols: list[OracleColumn] = []
+        for c in table.columns:
+            ora_raw = (
+                python_to_oracle(c).split("(")[0].strip()
+                if c.python_type is not None
+                else c.raw_type
+            )
+            cols.append(OracleColumn(**{**vars(c), "raw_type": ora_raw}))
+        return OracleTable(
+            name=table.name,
+            system=table.system,
+            namespace=table.namespace,
+            environment=getattr(table, "environment", None),
+            columns=cols,
+            properties=table.properties.copy(),
+        )
+    else:
+        return table
+
+
 @dataclass(kw_only=True)
 class OracleColumn(Column):
     char_length: int | None = None
