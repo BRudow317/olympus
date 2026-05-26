@@ -4,7 +4,7 @@ from dataclasses import dataclass #, field
 import os
 from typing import NamedTuple, TypedDict
 from collections.abc import Mapping, MutableMapping
-from enum import Enum
+from enum import StrEnum, Enum
 API_VERSION: str = os.getenv('SF_API_VERSION', '66.0')
 SF_EXTERNAL_CLIENT_APP_NAME: str = os.getenv('SF_EXTERNAL_CLIENT_APP_NAME', 'automation')
 SF_BASE_URL: str = os.getenv('SF_BASE_URL') or f"https://{os.getenv('SF_BASE_DOMAIN')}.salesforce.com"
@@ -17,7 +17,7 @@ BulkDataAny = list[Mapping[str, any]]
 BulkDataStr = list[Mapping[str, str]]
 
 # --- http methods ---
-class HttpMethod(str, Enum):
+class HttpMethod(StrEnum):
     delete = 'DELETE'
     get = 'GET'
     head = 'HEAD'
@@ -39,7 +39,7 @@ class PerAppUsage(NamedTuple):
     total: int
     name: str
 
-class Operation(str, Enum):
+class Operation(StrEnum):
     insert = "insert"
     upsert = "upsert"
     update = "update"
@@ -48,7 +48,7 @@ class Operation(str, Enum):
     query = "query"
     query_all = "queryAll"
 
-class JobState(str, Enum):
+class JobState(StrEnum):
     open = "Open"
     aborted = "Aborted"
     failed = "Failed"
@@ -56,7 +56,7 @@ class JobState(str, Enum):
     in_progress = "InProgress"
     job_complete = "JobComplete"
 
-class ColumnDelimiter(str, Enum):
+class ColumnDelimiter(StrEnum):
     BACKQUOTE = "BACKQUOTE"  # (`)
     CARET = "CARET"          # (^)
     COMMA = "COMMA"          # (,)
@@ -64,11 +64,11 @@ class ColumnDelimiter(str, Enum):
     SEMICOLON = "SEMICOLON"  # (;)
     TAB = "TAB"              # (\t)
 
-class LineEnding(str, Enum):
+class LineEnding(StrEnum):
     LF = "LF"
     CRLF = "CRLF"
 
-class ResultsType(str, Enum):
+class ResultsType(StrEnum):
     failed = "failedResults"
     successful = "successfulResults"
     unprocessed = "unprocessedRecords"

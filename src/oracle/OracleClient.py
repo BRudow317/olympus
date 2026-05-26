@@ -4,7 +4,7 @@ import logging
 logger: logging.Logger = logging.getLogger(__name__)
 import oracledb
 from collections.abc import Iterator, Iterable, Callable
-from typing import Any
+from typing import Any, Literal
 from oracledb import (
     LOB,
     Connection,
@@ -285,41 +285,24 @@ class OracleClient:
         )
         return (cmpl_prc.returncode, cmpl_prc.stdout, cmpl_prc.stderr)
 
-    def get_all_schemas(self) -> list[Any]:
+    def all_schemas(self) -> list[Any]:
         sql = """SELECT DISTINCT OWNER FROM ALL_TABLES"""
         return self.query(sql)
 
-    def get_schema_constraints(self, schema: str, constraint_type: str = 'P') -> list[dict[str, str]]:
+    def all_tables(self, schema: str) -> list[dict[str, str]]:
         sql = """
-            SELECT
-                col.table_name,
-                col.column_name
-            FROM all_constraints con
-            JOIN all_cons_columns col
-                ON con.constraint_name = col.constraint_name
-                AND con.owner          = col.owner
-            WHERE con.constraint_type = :constraint_type
-              AND con.owner = :schema
-            """.strip()
-        binds = {
-            "schema": schema.upper(),
-            "constraint_type": constraint_type
-        }
-        return self.query(sql, binds)
-
-    def get_tables(self, schema: str) -> list[dict[str, str]]:
-        sql = """
-            SELECT *
-            FROM ALL_TABLES
-            WHERE OWNER = :schema
+            SELECT DISTINCT table_name
+            FROM all_tables
+            WHERE owner = :schema
         """
         binds = {"schema": schema.upper()}
         return self.query(sql, binds)
 
-    def get_columns(self, schema: str, table: str) -> list[dict[str, Any]]:
+    def all_tab_columns(self, schema: str, table: str) -> list[dict[str, Any]]:
         sql = """
             SELECT
                 column_name,
+                column_id,
                 data_type,
                 data_length,
                 char_length,
@@ -327,15 +310,111 @@ class OracleClient:
                 data_precision,
                 data_scale,
                 nullable,
-                column_id,
-                default_length,
-                data_default
+                data_default,
+                default_length
             FROM all_tab_columns
-            WHERE OWNER = :owner AND TABLE_NAME = :table_name
+            WHERE owner = :schema 
+            AND table_name = :table_name
             ORDER BY column_id
         """
-        binds = {"owner": schema.upper(), "table_name": table.upper()}
+        binds = {"schema": schema.upper(), "table_name": table.upper()}
 
+        return self.query(sql, binds)
+
+    def all_constraints(self, 
+                        schema: str = '*', 
+                        table_name: str = '*', 
+                        constraint_type: str = '*'
+                        ) -> list[dict[str, str]]:
+        binds = {}
+        sql = """
+            SELECT 
+                con.owner,
+                con.table_name,
+                col.column_name,
+                con.constraint_name,
+                con.constraint_type,
+                CASE con.constraint_type 
+                    WHEN 'C' THEN 'CHECK / NOT NULL' 
+                    WHEN 'P' THEN 'PRIMARY KEY' 
+                    WHEN 'U' THEN 'UNIQUE' 
+                    WHEN 'R' THEN 'FOREIGN KEY' 
+                    WHEN 'V' THEN 'VIEW CHECK OPTION'
+                    WHEN 'O' THEN 'VIEW READ ONLY'
+                    WHEN 'F' THEN 'REF COLUMN'
+                    WHEN 'H' THEN 'HASH EXPRESSION'
+                    WHEN 'S' THEN 'SUPPLEMENTAL LOGGING'
+                    ELSE 'UNKNOWN (' || con.constraint_type || ')' 
+                END AS constraint_type_desc,
+                con.r_owner,
+                ac_cols_ref.table_name AS r_table,
+                ac_cols_ref.column_name AS r_column,
+                con.r_constraint_name,
+                con.delete_rule,
+                con.status,
+                con.deferrable,
+                con.deferred,
+                con.validated,
+                con.generated,
+                con.search_condition,
+                con.search_condition_vc,
+                con.bad,
+                con.rely,
+                con.last_change,
+                con.index_owner,
+                con.index_name,
+                con.invalid,
+                con.view_related,
+                con.origin_con_id
+            FROM all_constraints con
+            JOIN all_cons_columns col
+                ON con.constraint_name = col.constraint_name
+                AND con.owner          = col.owner
+            LEFT JOIN all_cons_columns ac_cols_ref
+                ON con.r_constraint_name = ac_cols_ref.constraint_name
+                AND con.r_owner          = ac_cols_ref.owner
+                AND col.position = ac_cols_ref.position
+            WHERE 1=1
+            """.strip()
+
+        if schema != '*':
+            sql += " AND con.owner = :schema"
+            binds["schema"] = schema.upper()
+        if table_name != '*':
+            sql += " AND con.table_name = :table_name"
+            binds["table_name"] = table_name.upper()
+        if constraint_type != '*':
+            sql += " AND con.constraint_type = :constraint_type"
+            binds["constraint_type"] = constraint_type.upper()
+
+        return self.query(sql, binds)
+
+    def get_composite_keys(self, schema: str, table_name: str):
+        sql = """
+            SELECT 
+                con.owner, 
+                con.table_name, 
+                con.constraint_name, 
+                con.constraint_type,
+                -- Merges composite columns into a single string
+                LISTAGG(col.column_name, ' ') WITHIN GROUP (ORDER BY col.position) AS column_names,
+                -- Identifies if it is composite right in the dataset
+                CASE 
+                    WHEN COUNT(col.column_name) OVER(PARTITION BY con.owner, con.constraint_name) > 1 
+                    THEN 'YES' ELSE 'NO' 
+                END AS is_composite,
+                con.r_owner, 
+                con.r_constraint_name
+            FROM all_constraints con
+            JOIN all_cons_columns col 
+                ON con.constraint_name = col.constraint_name 
+            AND con.owner = col.owner
+            WHERE con.owner = :schema
+                AND con.table_name = :table_name
+            GROUP BY 
+                con.owner, con.table_name, con.constraint_name, con.constraint_type, 
+                con.r_owner, con.r_constraint_name""".strip()
+        binds = {"schema": schema.upper(), "table_name": table_name.upper()}
         return self.query(sql, binds)
 
     # region Misc Methods

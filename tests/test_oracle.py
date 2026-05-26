@@ -9,7 +9,7 @@ import pytest
 
 from src.models import Records, System, Table
 from src.oracle.Oracle import Oracle
-from src.oracle.OracleDialect import varchar2_growth_buffer
+from src.oracle.OracleModels import varchar2_growth_buffer
 from src.seeding import seeding_test
 
 _DDL_PYTEST = """
@@ -66,7 +66,7 @@ def clean_dwh(dwh: Oracle) -> None:
 
 @pytest.fixture()
 def dwh_pytest(dwh: Oracle) -> Table:
-    return dwh.describe_table(Table(name="PYTEST", system=System.ORACLE, namespace="DWH"))
+    return dwh.describe_table(Table(name="PYTEST", system=System.oracle, namespace="DWH"))
 
 def _count(ora: Oracle, table: str = "PYTEST") -> int:
     return int(ora._client.query(
@@ -111,7 +111,7 @@ class TestMutateColumnTypes:
 
     def _mutate_and_get_col(self, qbl: Oracle, dwh: Oracle) -> dict[str, Any]:
         source = qbl.describe_table(
-            Table(name="PYTEST_MUT", system=System.ORACLE, namespace="QBL")
+            Table(name="PYTEST_MUT", system=System.oracle, namespace="QBL")
         )
         dwh.mutate_table(source)
         return _catalog_col(dwh, "PYTEST_MUT", "VAL")
@@ -181,7 +181,7 @@ class TestMutateVarchar2Widening:
 
     def _initial_mutate(self, qbl: Oracle, dwh: Oracle) -> None:
         source = qbl.describe_table(
-            Table(name="PYTEST_MUT", system=System.ORACLE, namespace="QBL")
+            Table(name="PYTEST_MUT", system=System.oracle, namespace="QBL")
         )
         dwh.mutate_table(source)
 
@@ -191,7 +191,7 @@ class TestMutateVarchar2Widening:
 
         # Source stays at 20 — no change expected
         source = qbl.describe_table(
-            Table(name="PYTEST_MUT", system=System.ORACLE, namespace="QBL")
+            Table(name="PYTEST_MUT", system=System.oracle, namespace="QBL")
         )
         dwh.mutate_table(source)
         assert _catalog_col(dwh, "PYTEST_MUT", "VAL")["CHAR_LENGTH"] == original_len
@@ -202,7 +202,7 @@ class TestMutateVarchar2Widening:
 
         qbl._client.execute("ALTER TABLE QBL.PYTEST_MUT MODIFY (VAL VARCHAR2(200 CHAR))")
         source = qbl.describe_table(
-            Table(name="PYTEST_MUT", system=System.ORACLE, namespace="QBL")
+            Table(name="PYTEST_MUT", system=System.oracle, namespace="QBL")
         )
         dwh.mutate_table(source)
         assert _catalog_col(dwh, "PYTEST_MUT", "VAL")["CHAR_LENGTH"] > original_len
@@ -216,7 +216,7 @@ class TestMutateVarchar2Widening:
         # Shrink QBL back to 20 — DWH must not shrink
         qbl._client.execute("ALTER TABLE QBL.PYTEST_MUT MODIFY (VAL VARCHAR2(20 CHAR))")
         source = qbl.describe_table(
-            Table(name="PYTEST_MUT", system=System.ORACLE, namespace="QBL")
+            Table(name="PYTEST_MUT", system=System.oracle, namespace="QBL")
         )
         dwh.mutate_table(source)
         assert _catalog_col(dwh, "PYTEST_MUT", "VAL")["CHAR_LENGTH"] == widened_len
@@ -236,20 +236,20 @@ class TestMutateStructural:
 
     def test_creates_missing_target_table(self, qbl: Oracle, dwh: Oracle) -> None:
         source = qbl.describe_table(
-            Table(name="PYTEST_MUT", system=System.ORACLE, namespace="QBL")
+            Table(name="PYTEST_MUT", system=System.oracle, namespace="QBL")
         )
         dwh.mutate_table(source)
         assert _table_exists(dwh, "PYTEST_MUT")
 
     def test_adds_new_column_to_existing_table(self, qbl: Oracle, dwh: Oracle) -> None:
         source = qbl.describe_table(
-            Table(name="PYTEST_MUT", system=System.ORACLE, namespace="QBL")
+            Table(name="PYTEST_MUT", system=System.oracle, namespace="QBL")
         )
         dwh.mutate_table(source)
 
         qbl._client.execute("ALTER TABLE QBL.PYTEST_MUT ADD (SCORE NUMBER)")
         source = qbl.describe_table(
-            Table(name="PYTEST_MUT", system=System.ORACLE, namespace="QBL")
+            Table(name="PYTEST_MUT", system=System.oracle, namespace="QBL")
         )
         dwh.mutate_table(source)
 
@@ -257,7 +257,7 @@ class TestMutateStructural:
 
     def test_returns_described_target_table(self, qbl: Oracle, dwh: Oracle) -> None:
         source = qbl.describe_table(
-            Table(name="PYTEST_MUT", system=System.ORACLE, namespace="QBL")
+            Table(name="PYTEST_MUT", system=System.oracle, namespace="QBL")
         )
         result = dwh.mutate_table(source)
         assert result.namespace == "DWH"
@@ -317,8 +317,8 @@ class TestSeedingPipeline:
 
     def _run(self) -> None:
         seeding_test(
-            source_system=System.ORACLE, source_environment="QBL", source_namespace="QBL",
-            target_system=System.ORACLE, target_environment="DWH", target_namespace="DWH",
+            source_system=System.oracle, source_environment="QBL", source_namespace="QBL",
+            target_system=System.oracle, target_environment="DWH", target_namespace="DWH",
             tables=["PYTEST_MUT"],
         )
 

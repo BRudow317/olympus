@@ -6,8 +6,8 @@ import json
 
 from src.sf.Salesforce import Salesforce
 from src.oracle.Oracle import Oracle
-from src.oracle.OracleDialect import to_oracle_snake
 from src.models import DataSource, System, SystemPrefix, Table
+from src.oracle.OracleModels import to_oracle_snake
 
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 def make_client(system: System, environment: str, namespace: str | None) -> DataSource:
-    if system == System.ORACLE:
+    if system == System.oracle:
         return Oracle(environment, namespace)
     return Salesforce(environment, namespace)
 
@@ -44,7 +44,7 @@ def resolve_cross_system_name(
 
     target_prefix = str(SystemPrefix[target_system.name])  # 'ora' or 'sf'
 
-    if target_system == System.ORACLE:
+    if target_system == System.oracle:
         # Round-trip: SF object was originally from Oracle (name starts with 'ora_')
         rtrip = f"{target_prefix}_"  # "ora_"
         if source_name.lower().startswith(rtrip):
@@ -57,7 +57,7 @@ def resolve_cross_system_name(
         src_prefix = str(SystemPrefix[source_system.name]).upper()  # "SF"
         return f"{src_prefix}_{to_oracle_snake(source_name)}"
 
-    else:  # target_system == System.SALESFORCE
+    else:  # target_system == System.salesforce
         # Round-trip: Oracle table was originally from SF (name starts with 'SF_')
         rtrip = f"{target_prefix}_".upper()  # "SF_"
         if source_name.upper().startswith(rtrip):

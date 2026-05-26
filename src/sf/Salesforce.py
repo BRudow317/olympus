@@ -111,7 +111,7 @@ class Salesforce(DataSource):
         ]
         return Table(
             name=table.name,
-            system=System.SALESFORCE,
+            system=System.salesforce,
             alias=resp.get("label"),
             namespace=table.namespace,
             environment=table.environment,
@@ -137,7 +137,7 @@ class Salesforce(DataSource):
             tables.append(
                 Table(
                     name=obj["name"],
-                    system=System.SALESFORCE,
+                    system=System.salesforce,
                     alias=obj.get("label"),
                     namespace=namespace,
                     environment=environment,
@@ -152,7 +152,7 @@ class Salesforce(DataSource):
 
         tables.sort(key = lambda t: t.name)
         return Schema(
-            system=System.SALESFORCE,
+            system=System.salesforce,
             namespace=namespace,
             environment=environment,
             tables=tables,

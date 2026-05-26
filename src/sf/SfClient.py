@@ -19,12 +19,6 @@ from src.sf.SfModels import (
 import httpx
 
 
-
-CLIENT_NAME: str | None = 'Salesforce'
-CLIENT_ALIAS: str | None = 'sf'
-CLIENT_NAMESPACE: str | None = 'salesforce'
-
-
 def fetch_client_credentials(
     consumer_key: str | None = None,
     consumer_secret: str | None = None,

@@ -23,7 +23,7 @@ py -3.11 -m venv .venv
 
 ---
 
-## Environment variables
+## env file and usage
 
 ``` shell
 ORAENV=$1

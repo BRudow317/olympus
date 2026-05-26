@@ -6,24 +6,24 @@ from collections.abc import Iterator
 from enum import StrEnum
 
 class System(StrEnum):
-    ORACLE = 'oracle'
-    SALESFORCE = 'salesforce'
+    oracle = 'oracle'
+    salesforce = 'salesforce'
 
 class SystemPrefix(StrEnum):
-    ORACLE = 'ora'
-    SALESFORCE = 'sf'
+    oracle = 'ora'
+    salesforce = 'sf'
 
 class PythonTypes(StrEnum):
-    STRING = "string"
-    INTEGER = "integer"
-    FLOAT = "float"
-    BOOLEAN = "boolean"
-    DATETIME = "datetime" # datetime.datetime + timezone format
-    DATE = "date"       # datetime.date
-    TIME = "time"       # datetime.time
-    BYTE = "byte"
-    BYTEARRAY = "bytearray"
-    JSON = "json"       # dict or list
+    string = "string"
+    integer = "integer"
+    float = "float"
+    boolean = "boolean"
+    datetime = "datetime" # datetime.datetime + timezone format
+    date = "date"       # datetime.date
+    time = "time"       # datetime.time
+    byte = "byte"
+    bytearray = "bytearray"
+    json = "json"       # dict or list
 
 C = TypeVar("C", bound="Column")
 TABLE = TypeVar("TABLE", bound="Table")
@@ -52,6 +52,7 @@ class Column:
     properties: dict[str, Any] = field(default_factory=dict)
     ordinal_position: int | None = None
     is_computed: bool = False
+    formula: str | None = None # TODO: add this to the describe_table functions and implement in both sf and oracle
     is_deprecated: bool = False
     is_hidden: bool = False
     is_indexed: bool = False
@@ -76,11 +77,6 @@ class Table(Generic[C]):
     def column_map(self) -> dict[str, C]:
         return {f.name: f for f in self.columns}
 
-    @property
-    def qualified_name(self) -> str:
-        if self.namespace:
-            return f"{self.namespace}.{self.name}"
-        return self.name
 
 @dataclass
 class Schema:

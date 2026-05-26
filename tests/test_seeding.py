@@ -31,7 +31,7 @@ CREATE TABLE {schema}.PYTEST_SEED (
 # helpers 
 def _run_cli(*args: str) -> None:
     result = subprocess.run(
-        [sys.executable, "src/app.py", *args],
+        [sys.executable, "main.py", "--exec", "src/app.py", *args],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
@@ -93,7 +93,7 @@ class TestSfToOracleSeeding:
     Covers every SF field type that produces a distinct Oracle column type:
       id/string/email/phone/url/reference/picklist → VARCHAR2
       textarea (length > 4000)                     → CLOB
-      boolean                                      → NUMBER
+      boolean                                      → VARCHAR2(1 CHAR)  'Y'/'N'
       date                                         → DATE
       datetime                                     → TIMESTAMP
       currency/percent/double                      → NUMBER (FLOAT path)
@@ -102,6 +102,8 @@ class TestSfToOracleSeeding:
 
     @pytest.fixture(scope="class", autouse=True)
     def seed_sf_tables(self, dwh: Oracle) -> Generator[None, None, None]:
+        _drop(dwh, "SF_CONTACT")
+        _drop(dwh, "SF_ACCOUNT")
         _run_cli(
             "--source-system", "salesforce",
             "--source-environment", "TRAIL",
@@ -111,9 +113,11 @@ class TestSfToOracleSeeding:
             "--target-namespace", "DWH",
             "--tables", "Contact", "Account",
         )
-        yield
-        _drop(dwh, "SF_CONTACT")
-        _drop(dwh, "SF_ACCOUNT")
+        try:
+            yield
+        finally:
+            _drop(dwh, "SF_CONTACT")
+            _drop(dwh, "SF_ACCOUNT")
 
     # table creation 
     def test_contact_table_created(self, dwh: Oracle) -> None:
@@ -154,10 +158,12 @@ class TestSfToOracleSeeding:
     def test_account_textarea_maps_to_clob(self, dwh: Oracle) -> None:
         assert _catalog_col(dwh, "SF_ACCOUNT", "DESCRIPTION")["DATA_TYPE"] == "CLOB"
 
-    # SF 'boolean' → NUMBER 
+    # SF 'boolean' → VARCHAR2(1 CHAR)
 
-    def test_contact_boolean_field_maps_to_number(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "SF_CONTACT", "DO_NOT_CALL")["DATA_TYPE"] == "NUMBER"
+    def test_contact_boolean_maps_to_varchar2(self, dwh: Oracle) -> None:
+        col = _catalog_col(dwh, "SF_CONTACT", "DO_NOT_CALL")
+        assert col["DATA_TYPE"] == "VARCHAR2"
+        assert int(col["CHAR_LENGTH"]) == 1
 
     # SF 'date' → DATE 
 
@@ -247,9 +253,11 @@ class TestOracleToOracleSeeding:
             "--target-namespace", "DWH",
             "--tables", "PYTEST_SEED",
         )
-        yield
-        for ora in (dwh, qbl):
-            _drop(ora, "PYTEST_SEED")
+        try:
+            yield
+        finally:
+            for ora in (dwh, qbl):
+                _drop(ora, "PYTEST_SEED")
 
     # structural 
     def test_target_table_created(self, dwh: Oracle) -> None:
