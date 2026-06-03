@@ -244,6 +244,13 @@ class OracleTable(Table[OracleColumn]):
         pk_names: list[str] = [col.bind_name for col in self.columns if col.is_primary_key]
         data_names: list[str] = [col.bind_name for col in self.columns if not col.is_primary_key]
         all_cols: list[str] = pk_names + data_names
+
+        if not pk_names:
+            raise ValueError(
+                f"Cannot build an upsert MERGE for '{self.qualified_name}': no primary-key "
+                f"column is identified, so there is no key to match on. Upsert requires a key "
+                f"(for Salesforce sources this is the Id/ID column)."
+            )
         
         match_conds: str = " AND ".join([f"target.{col} = source.{col}" for col in pk_names])
         update_assigns: str = ", ".join([f"target.{col} = source.{col}" for col in data_names])

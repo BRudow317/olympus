@@ -495,9 +495,21 @@ class Oracle(DataSource):
             )
 
         # 3. Maintain Abstract Contract: Pass clean identity profile to describe_table for generic Table exit
-        return self.describe_table(
+        described: Table[Any] = self.describe_table(
             OracleTable(name=ora_table.name, system=System.oracle, namespace=ora_table.namespace)
         )
+
+        # The catalog carries no PK/unique constraints (we create columns only),
+        # so describe_table can't recover the logical key. Carry it over from the
+        # source-derived schema by column name, otherwise merge_sql() has no
+        # ON-clause keys and upserts fail with ORA-00936.
+        source_key = {c.oracle_name: c for c in ora_table.columns}
+        for col in described.columns:
+            src = source_key.get(col.oracle_name)
+            if src is not None:
+                col.is_primary_key = col.is_primary_key or src.is_primary_key
+                col.is_unique = col.is_unique or src.is_unique
+        return described
     
     def mutate_create_table(self, table: OracleTable) -> None:
         col_defs: list[Any] = []

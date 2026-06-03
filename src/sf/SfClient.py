@@ -50,7 +50,6 @@ class SfClient:
         logger.debug(f'"SF_{environment}_BASE_URL" : "{self.base_url}"')
         
         self.auth_url = str(self.resolve_url(auth_url))
-        logger.debug(f'"SF_{environment}_AUTH_URL" : "{self.auth_url}"')
         
         _ck, _cs, _url = consumer_key, consumer_secret, self.auth_url
         self._get_token = lambda: self._auth_callout(_ck, _cs, _url)
