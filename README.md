@@ -16,33 +16,67 @@ run a raw query, or pull records -- all through the same four methods.
 
 Requires Python 3.11.
 
-```
+```shell
 py -3.11 -m venv .venv
 .venv\Scripts\pip install -e .
 ```
 
 ---
 
-## env file and usage
+## Usage
+```shell
 
-``` shell
-ORAENV=$1
-SFENV=$2
-ORACLE_${ORAENV}_USER=myuser
-ORACLE_${ORAENV}_PASS=examplepassword123
-ORACLE_${ORAENV}_HOST=localhost
-ORACLE_${ORAENV}_PORT=1521
-ORACLE_${ORAENV}_SERVICE=exampledbservice
+# bash
+python3 ./charon.py -v -l ./.logs \
+        --exec ./src/app.py \
+        --source-system salesforce \
+        --source-environment TRAIL \
+        --source-namespace TRAIL \
+        --target-system oracle \
+        --target-environment DWH \
+        --target-namespace DWH \
+        --action reset \
+        --tables Contact Account
 
-SF_${SFENV}_CONSUMER_KEY=exampleconsumerkey123
-SF_${SFENV}_CONSUMER_SECRET=examplesecretkey123
-SF_${SFENV}_BASE_URL=https://some-trailheadorg-8eqg8r-dev-ed.trailblaze.my.salesforce.com
-SF_${SFENV}_API_VERSION=66.0
-SF_${SFENV}_AUTH_URI=/services/oauth2/token
-SF_${SFENV}_CALLBACK_URL=http://localhost:1717/OauthRedirect
+# Powershell
+python ./charon.py -v -l ./.logs `
+        --exec ./src/app.py `
+        --source-system salesforce `
+        --source-environment TRAIL `
+        --source-namespace TRAIL `
+        --target-system oracle `
+        --target-environment DWH `
+        --target-namespace DWH `
+        --action reset `
+        --tables *
 ```
 
+
+## Configs
+
+
+``` shell
+env=$1
+ORACLE_DBNAME_USER=myuser
+ORACLE_DBNAME_PASS=examplepassword123
+ORACLE_DBNAME_HOST=localhost
+ORACLE_DBNAME_PORT=1521
+ORACLE_DBNAME_SERVICE=exampledbservice
+
+SF_ORGNAME_CONSUMER_KEY=exampleconsumerkey123
+SF_ORGNAME_CONSUMER_SECRET=examplesecretkey123
+SF_ORGNAME_BASE_URL=https://some-trailheadorg-8eqg8r-dev-ed.trailblaze.my.salesforce.com
+```
 ---
+
+### Other Important Configs
+```jsonc
+{
+    "Salesforce_API_Version": "66.0",
+    "Salesforce_Auth_URI": "/services/oauth2/token",
+    "Salesforce_Callback_URL": "http://localhost:1717/OauthRedirect",
+}
+```
 
 ## DataSource protocol
 

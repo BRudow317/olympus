@@ -1,21 +1,32 @@
-"""seeding.py"""
+"""seeding.py
+
+Orchestrates cross-system migrations using the system-agnostic DataSource
+protocol. The same flow handles all four directions (sf->oracle, oracle->sf,
+oracle->oracle, sf->sf):
+
+    describe source table -> mutate (create/align) target table ->
+    stream source records -> rename keys to target column names -> load.
+"""
 from __future__ import annotations
+
 import logging
-logger: logging.Logger = logging.getLogger(__name__)
-import json
+from typing import TYPE_CHECKING, Any
+from collections.abc import Iterator
 
 from src.sf.Salesforce import Salesforce
 from src.oracle.Oracle import Oracle
-from src.models import DataSource, System, SystemPrefix, Table
+from src.models import DataSource, System, Table, Schema, Records
 from src.oracle.OracleModels import to_oracle_snake
+from src.sf.SfModels import SalesforceRequestError
 
-from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
-    from src.models import Records
+    from src.models import Column
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 
-def make_client(system: System, environment: str, namespace: str | None) -> DataSource:
-    if system == System.oracle:
+def get_datasource(system: System, environment: str, namespace: str | None) -> DataSource:
+    if System(system) == System.oracle:
         return Oracle(environment, namespace)
     return Salesforce(environment, namespace)
 
@@ -25,16 +36,13 @@ def resolve_cross_system_name(
     source_system: System,
     target_system: System,
 ) -> str:
-    """
-    Resolve the table/object name to use on the target system.
+    """Resolve the table/object name to use on the target system.
 
-    SF → Oracle: prepends 'SF_' and applies oracle snake-case → SF_CONTACT
-    Oracle → SF: prepends 'ora_', lowercases, appends '__c' → ora_contact__c
+    SF -> Oracle: prepends 'SF_' and snake-cases -> SF_CONTACT
+    Oracle -> SF: prepends 'ora_', lowercases, appends '__c' -> ora_contact__c
 
-    Round-trip detection: if the source name already carries the target system's
-    own prefix, it's returning home — strip the prefix instead of double-prefixing.
-      SF_CONTACT (Oracle) → SF  : strip 'SF_' → CONTACT
-      ora_contact__c (SF) → Oracle: strip 'ora_' + '__c' → CONTACT
+    Round-trip detection: if the name already carries the target system's prefix
+    it is returning home, so the prefix is stripped instead of double-prefixed.
     """
     source_system = System(source_system)
     target_system = System(target_system)
@@ -42,97 +50,140 @@ def resolve_cross_system_name(
     if source_system == target_system:
         return source_name
 
-    target_prefix = str(SystemPrefix[target_system.name])  # 'ora' or 'sf'
-
-    if target_system == System.oracle:
-        # Round-trip: SF object was originally from Oracle (name starts with 'ora_')
-        rtrip = f"{target_prefix}_"  # "ora_"
-        if source_name.lower().startswith(rtrip):
-            stripped = source_name[len(rtrip):]
+    if source_system == System.salesforce and target_system == System.oracle:
+        if source_name.lower().startswith("ora_"):
+            stripped = source_name[4:]
             if stripped.lower().endswith("__c"):
                 stripped = stripped[:-3]
             return to_oracle_snake(stripped)
+        return f"SF_{to_oracle_snake(source_name)}"
 
-        # Normal SF → Oracle: SF_CONTACT
-        src_prefix = str(SystemPrefix[source_system.name]).upper()  # "SF"
-        return f"{src_prefix}_{to_oracle_snake(source_name)}"
+    if source_system == System.oracle and target_system == System.salesforce:
+        if source_name.upper().startswith("SF_"):
+            return source_name[3:]
+        return f"ora_{source_name.lower()}__c"
 
-    else:  # target_system == System.salesforce
-        # Round-trip: Oracle table was originally from SF (name starts with 'SF_')
-        rtrip = f"{target_prefix}_".upper()  # "SF_"
-        if source_name.upper().startswith(rtrip):
-            return source_name[len(rtrip):]  # SF is case-insensitive; bare name works
-
-        # Normal Oracle → SF: ora_contact__c
-        src_prefix = str(SystemPrefix[source_system.name])  # "ora"
-        return f"{src_prefix}_{source_name.lower()}__c"
+    return source_name
 
 
-def fetch_test(
-    system: System,
-    environment: str,
-    namespace: str | None = None,
-    tables: list[str] = []
-) -> None:
-    client: DataSource = make_client(system, environment, namespace)
+def _build_rename_map(
+    source_columns: list[Column], target_columns: list[Column]
+) -> dict[str, str]:
+    """Map each source column name to its corresponding target column name.
 
-    for table_name in tables:
-        stub: Table[Any] = Table(
-            name=table_name,
-            system=system,
-            namespace=namespace,
-            environment=environment
-        )
-        described_table: Table[Any] = client.describe_table(stub)
-        result: Records = client.get_records(described_table)
-
-        if result.code != 200:
-            raise RuntimeError(f"Unable to fetch Table: {described_table.name} from {described_table.environment}")
-
-        count = 0
-        for record in result.data:
-            logger.debug(json.dumps(record, default=str, indent=2))
-            count += 1
-
-        logger.info(f"Fetched {count} record(s) from {table_name}")
+    Correspondence is established through a canonical form (Oracle snake-case),
+    which is stable in every direction because it is idempotent on its own
+    output: to_oracle_snake('LastName') == to_oracle_snake('LAST_NAME') == 'LAST_NAME'.
+    """
+    target_by_canon: dict[str, str] = {
+        to_oracle_snake(c.name): c.name for c in target_columns
+    }
+    rename: dict[str, str] = {}
+    for col in source_columns:
+        target_name = target_by_canon.get(to_oracle_snake(col.name))
+        if target_name is not None:
+            rename[col.name] = target_name
+    return rename
 
 
-def seeding_test(
+def _rename_records(records: Records, rename: dict[str, str]) -> Records:
+    """Lazily rewrite record keys from source names to target column names."""
+    if not rename:
+        return records
+
+    source_data = records.data
+
+    def renamed() -> Iterator[dict[str, Any]]:
+        for row in source_data:
+            yield {rename.get(k, k): v for k, v in row.items()}
+
+    return Records(
+        data=renamed(),
+        columns=records.columns,
+        code=records.code,
+        message=records.message,
+    )
+
+
+def seeding(
     source_system: System,
     source_environment: str,
     source_namespace: str | None,
     target_system: System,
     target_environment: str,
     target_namespace: str | None,
-    tables: list[str]
+    tables: list[str],
+    action: str = "reset",
+    external_id_field: str | None = None,
 ) -> int:
     source_system = System(source_system)
     target_system = System(target_system)
 
-    source: DataSource = make_client(source_system, source_environment, source_namespace)
-    target: DataSource = make_client(target_system, target_environment, target_namespace)
+    source: DataSource = get_datasource(source_system, source_environment, source_namespace)
+    target: DataSource = get_datasource(target_system, target_environment, target_namespace)
+
+    if tables and tables[0] == "*":
+        schema: Schema = source.describe_schema(namespace=source.namespace)
+        tables = [t.name for t in schema.tables]
+
+    skipped: list[str] = []
 
     for table_name in tables:
-        source_stub: Table[Any] = Table(
-            name=table_name,
-            system=source_system,
-            environment=source_environment,
-            namespace=source_namespace,
+        try:
+            source_stub: Table[Any] = Table(
+                name=table_name,
+                system=source_system,
+                environment=source_environment,
+                namespace=source_namespace,
+            )
+            described_source_table: Table[Any] = source.describe_table(source_stub)
+
+            target_name: str = resolve_cross_system_name(table_name, source_system, target_system)
+            target_stub: Table[Any] = Table(
+                name=target_name,
+                system=target_system,
+                environment=target_environment,
+                namespace=target_namespace,
+                columns=described_source_table.columns,
+            )
+            target_table: Table[Any] = target.mutate_table(target_stub, source_system=source_system)
+
+            records: Records = source.get_records(described_source_table)
+            if records.code != 200:
+                raise RuntimeError(
+                    f"Failed to read records from {described_source_table.name}: {records.message}"
+                )
+
+            rename = _build_rename_map(described_source_table.columns, target_table.columns)
+            records = _rename_records(records, rename)
+
+            # Note: source records stream lazily, so a Salesforce access denial on
+            # the underlying SOQL query surfaces here, during load, not above.
+            target.load_records(
+                action=action,
+                table=target_table,
+                records=records,
+                external_id_field=external_id_field,
+            )
+            logger.info("Migrated %s -> %s (action=%s)", table_name, target_name, action)
+        except SalesforceRequestError as e:
+            if not e.is_access_error:
+                raise
+            # The authenticated user can't read this object; skip it and keep
+            # going so one inaccessible table doesn't abort the whole migration.
+            logger.warning(
+                "Skipping '%s': Salesforce access denied (%s).",
+                table_name,
+                ", ".join(e.error_codes) or e.status_code,
+            )
+            skipped.append(table_name)
+
+    migrated = len(tables) - len(skipped)
+    if skipped:
+        logger.info(
+            "Seeding complete: %d migrated, %d skipped (access denied): %s",
+            migrated, len(skipped), ", ".join(skipped),
         )
-        described_source_table: Table[Any] = source.describe_table(source_stub)
-
-        target_name: str = resolve_cross_system_name(table_name, source_system, target_system)
-        target_stub: Table[Any] = Table(
-            name=target_name,
-            system=source_system,
-            environment=target_environment,
-            namespace=target_namespace,
-            columns=described_source_table.columns,
-        )
-
-        target_table: Table[Any] = target.mutate_table(target_stub)
-        records: Records = source.get_records(described_source_table)
-        target.load_records(action="reset", table=target_table, records=records)
-
-    logger.info("Seeding.py Success!")
+    else:
+        logger.info("Seeding complete: %d table(s).", migrated)
     return 0

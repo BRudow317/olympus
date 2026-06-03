@@ -12,9 +12,12 @@ import time
 import datetime
 import math
 from collections.abc import Iterator
+from enum import StrEnum
 from typing import Any, TYPE_CHECKING, TypedDict, AnyStr
-
-from src.sf.SfModels import Operation, JobState, ColumnDelimiter, LineEnding, ResultsType
+from src.sf.SfModels import (
+    HttpMethod, 
+    HttpMethod as http,
+)
 
 if TYPE_CHECKING:
     from src.sf.SfClient import SfClient
@@ -22,6 +25,51 @@ if TYPE_CHECKING:
 MAX_INGEST_JOB_FILE_SIZE = 150 * 1024 * 1024   # 150 MB per job
 MAX_INGEST_JOB_PARALLELISM = 15
 DEFAULT_QUERY_PAGE_SIZE = 50_000
+class Operation(StrEnum):
+    insert = "insert"
+    upsert = "upsert"
+    update = "update"
+    delete = "delete"
+    hard_delete = "hardDelete"
+    query = "query"
+    query_all = "queryAll"
+
+class JobState(StrEnum):
+    open = "Open"
+    aborted = "Aborted"
+    failed = "Failed"
+    upload_complete = "UploadComplete"
+    in_progress = "InProgress"
+    job_complete = "JobComplete"
+
+class ColumnDelimiter(StrEnum):
+    BACKQUOTE = "BACKQUOTE"  # (`)
+    CARET = "CARET"          # (^)
+    COMMA = "COMMA"          # (,)
+    PIPE = "PIPE"            # (|)
+    SEMICOLON = "SEMICOLON"  # (;)
+    TAB = "TAB"              # (\t)
+
+class LineEnding(StrEnum):
+    LF = "LF"
+    CRLF = "CRLF"
+
+class ResultsType(StrEnum):
+    failed = "failedResults"
+    successful = "successfulResults"
+    unprocessed = "unprocessedRecords"
+
+# --- Bulk API 2.0 Types ---
+class QueryParameters(TypedDict, total=False):
+    maxRecords: int
+    locator: str
+
+class QueryRecordsResult(TypedDict):
+    locator: str
+    number_of_records: int
+    records: str
+
+QueryResult = QueryRecordsResult
 
 class QueryBytesResult(TypedDict):
     locator: str
@@ -69,10 +117,14 @@ class Bulk2SObject:
         """Serialize a list of dicts to CSV bytes using Python's csv module."""
         if not records:
             return b""
+        # Use the union of keys across all records (order-preserving). prepare_record
+        # omits null fields, so rows can have differing key sets; a header built from
+        # only the first row would silently drop or misalign columns.
+        fieldnames = list(dict.fromkeys(k for record in records for k in record))
         buf = io.StringIO()
         writer = csv.DictWriter(
             buf,
-            fieldnames=list(records[0].keys()),
+            fieldnames=fieldnames,
             lineterminator="\n",
             extrasaction="ignore",
         )
@@ -333,7 +385,7 @@ class _Bulk2Client:
             headers = self._headers()
 
         response = self._http.request(
-            "POST", self._url(None, is_query),
+            http.post, self._url(None, is_query),
             headers=headers,
             content=json.dumps(payload, allow_nan=False).encode(),
         )
@@ -370,7 +422,7 @@ class _Bulk2Client:
         raise Exception(f"Job {job_id} timed out after {self.DEFAULT_WAIT_TIMEOUT_SECONDS}s")
 
     def get_job(self, job_id: str, is_query: bool) -> dict[str, Any]:
-        response = self._http.request("GET", self._url(job_id, is_query))
+        response = self._http.request(http.get, self._url(job_id, is_query))
         return response.json()
 
     def close_job(self, job_id: str) -> dict[str, Any]:
@@ -380,12 +432,12 @@ class _Bulk2Client:
         return self._set_state(job_id, is_query=is_query, state=JobState.aborted.value)
 
     def delete_job(self, job_id: str, is_query: bool) -> dict[str, Any]:
-        response = self._http.request("DELETE", self._url(job_id, is_query))
+        response = self._http.request(http.delete, self._url(job_id, is_query))
         return response.json()
 
     def _set_state(self, job_id: str, is_query: bool, state: str) -> dict[str, Any]:
         response = self._http.request(
-            "PATCH", self._url(job_id, is_query),
+            http.patch, self._url(job_id, is_query),
             content=json.dumps({"state": state}, allow_nan=False).encode(),
         )
         return response.json()
@@ -399,7 +451,7 @@ class _Bulk2Client:
                 "Bulk 2.0 limit. Reduce chunk_size on the upload call."
             )
         response = self._http.request(
-            "PUT",
+            http.put,
             self._url(job_id, is_query=False) + "/batches",
             headers=self._headers(self.CSV_CONTENT_TYPE, self.JSON_CONTENT_TYPE),
             content=data,
@@ -418,7 +470,7 @@ class _Bulk2Client:
             params["locator"] = locator
 
         response = self._http.request(
-            "GET",
+            http.get,
             self._url(job_id, is_query=True) + "/results",
             headers=self._headers(self.JSON_CONTENT_TYPE, self.CSV_CONTENT_TYPE),
             params=params,
@@ -436,7 +488,7 @@ class _Bulk2Client:
 
     def get_ingest_results(self, job_id: str, results_type: str) -> bytes:
         response = self._http.request(
-            "GET",
+            http.get,
             self._url(job_id, is_query=False) + f"/{results_type}",
             headers=self._headers(self.JSON_CONTENT_TYPE, self.CSV_CONTENT_TYPE),
         )

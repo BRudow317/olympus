@@ -23,7 +23,7 @@
     {
       "root": ".",
       "extraPaths": [
-        "."
+        "src", "tests", "lib"
       ]
     }
   ]

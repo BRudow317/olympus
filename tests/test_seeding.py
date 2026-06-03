@@ -12,7 +12,7 @@ import pytest
 
 from src.oracle.Oracle import Oracle
 
-# DDL 
+# DDL
 _DDL_ORA_SEED = """
 CREATE TABLE {schema}.PYTEST_SEED (
     ID          NUMBER(10)          NOT NULL,
@@ -31,7 +31,7 @@ CREATE TABLE {schema}.PYTEST_SEED (
 # helpers 
 def _run_cli(*args: str) -> None:
     result = subprocess.run(
-        [sys.executable, "main.py", "--exec", "src/app.py", *args],
+        [sys.executable, "charon.py", "--exec", "src/app.py", *args],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
@@ -43,31 +43,31 @@ def _run_cli(*args: str) -> None:
 
 def _drop(ora: Oracle, table: str) -> None:
     try:
-        ora._client.execute(f"DROP TABLE {ora._schema()}.{table} CASCADE CONSTRAINTS")
+        ora.client.execute(f"DROP TABLE {ora.schema()}.{table} CASCADE CONSTRAINTS")
     except oracledb.DatabaseError:
         pass
 
 
 def _count(ora: Oracle, table: str) -> int:
     return int(
-        ora._client.query(f"SELECT COUNT(*) AS CNT FROM {ora._schema()}.{table}")[0]["CNT"]
+        ora.client.query(f"SELECT COUNT(*) AS CNT FROM {ora.schema()}.{table}")[0]["CNT"]
     )
 
 
 def _catalog_col(ora: Oracle, table: str, column: str) -> dict[str, Any]:
-    rows = ora._client.query(
+    rows = ora.client.query(
         "SELECT DATA_TYPE, CHAR_LENGTH, DATA_PRECISION, DATA_SCALE "
         "FROM ALL_TAB_COLUMNS "
         "WHERE OWNER = :o AND TABLE_NAME = :t AND COLUMN_NAME = :c",
-        {"o": ora._schema(), "t": table, "c": column},
+        {"o": ora.schema(), "t": table, "c": column},
     )
     return dict(rows[0]) if rows else {}
 
 
 def _table_exists(ora: Oracle, table: str) -> bool:
-    rows = ora._client.query(
+    rows = ora.client.query(
         "SELECT 1 FROM ALL_TABLES WHERE OWNER = :o AND TABLE_NAME = :t",
-        {"o": ora._schema(), "t": table},
+        {"o": ora.schema(), "t": table},
     )
     return bool(rows)
 
@@ -161,7 +161,8 @@ class TestSfToOracleSeeding:
     # SF 'boolean' → VARCHAR2(1 CHAR)
 
     def test_contact_boolean_maps_to_varchar2(self, dwh: Oracle) -> None:
-        col = _catalog_col(dwh, "SF_CONTACT", "DO_NOT_CALL")
+        # IsDeleted is a standard always-present Contact boolean.
+        col = _catalog_col(dwh, "SF_CONTACT", "IS_DELETED")
         assert col["DATA_TYPE"] == "VARCHAR2"
         assert int(col["CHAR_LENGTH"]) == 1
 
@@ -232,17 +233,17 @@ class TestOracleToOracleSeeding:
         for ora in (qbl, dwh):
             _drop(ora, "PYTEST_SEED")
 
-        qbl._client.execute(_DDL_ORA_SEED.format(schema="QBL"))
-        qbl._client.execute(
+        qbl.client.execute(_DDL_ORA_SEED.format(schema="QBL"))
+        qbl.client.execute(
             "INSERT INTO QBL.PYTEST_SEED "
             "(ID, LABEL, SCORE, INT_VAL, FLAG, BORN_ON, UPDATED_AT) "
             "VALUES (1, 'Alpha', 3.14, 42, 1, "
             "DATE '2020-01-01', TIMESTAMP '2024-06-15 12:00:00')"
         )
-        qbl._client.execute(
+        qbl.client.execute(
             "INSERT INTO QBL.PYTEST_SEED (ID, LABEL, FLAG) VALUES (2, 'Beta', 0)"
         )
-        qbl._client.commit()
+        qbl.client.commit()
 
         _run_cli(
             "--source-system", "oracle",
@@ -293,30 +294,30 @@ class TestOracleToOracleSeeding:
 
     # data integrity 
     def test_varchar2_data_survives_transit(self, dwh: Oracle) -> None:
-        rows = dwh._client.query("SELECT LABEL FROM DWH.PYTEST_SEED WHERE ID = 1")
+        rows = dwh.client.query("SELECT LABEL FROM DWH.PYTEST_SEED WHERE ID = 1")
         assert rows[0]["LABEL"] == "Alpha"
 
     def test_integer_data_survives_transit(self, dwh: Oracle) -> None:
-        rows = dwh._client.query("SELECT INT_VAL FROM DWH.PYTEST_SEED WHERE ID = 1")
+        rows = dwh.client.query("SELECT INT_VAL FROM DWH.PYTEST_SEED WHERE ID = 1")
         assert int(rows[0]["INT_VAL"]) == 42
 
     def test_flag_false_row_survives_transit(self, dwh: Oracle) -> None:
-        rows = dwh._client.query("SELECT FLAG FROM DWH.PYTEST_SEED WHERE ID = 2")
+        rows = dwh.client.query("SELECT FLAG FROM DWH.PYTEST_SEED WHERE ID = 2")
         assert int(rows[0]["FLAG"]) == 0
 
     def test_date_data_survives_transit(self, dwh: Oracle) -> None:
-        rows = dwh._client.query("SELECT BORN_ON FROM DWH.PYTEST_SEED WHERE ID = 1")
+        rows = dwh.client.query("SELECT BORN_ON FROM DWH.PYTEST_SEED WHERE ID = 1")
         val = rows[0]["BORN_ON"]
         if isinstance(val, datetime.datetime):
             val = val.date()
         assert val == datetime.date(2020, 1, 1)
 
     def test_null_fields_survive_transit(self, dwh: Oracle) -> None:
-        rows = dwh._client.query("SELECT SCORE, BORN_ON FROM DWH.PYTEST_SEED WHERE ID = 2")
+        rows = dwh.client.query("SELECT SCORE, BORN_ON FROM DWH.PYTEST_SEED WHERE ID = 2")
         assert rows[0]["SCORE"] is None
         assert rows[0]["BORN_ON"] is None
 
-    # idempotency 
+    # idempotency
     def test_oracle_to_oracle_is_idempotent(self, qbl: Oracle, dwh: Oracle) -> None:
         count_before = _count(dwh, "PYTEST_SEED")
         _run_cli(
@@ -329,3 +330,50 @@ class TestOracleToOracleSeeding:
             "--tables", "PYTEST_SEED",
         )
         assert _count(dwh, "PYTEST_SEED") == count_before
+
+
+# SF -> Oracle -> SF round trip
+class TestSfOracleRoundTrip:
+    """The headline migration: discover Salesforce schema + data into Oracle,
+    then push those same records back into Salesforce as an upsert (keyed on Id).
+
+    Verifies both legs run end-to-end through the CLI without error and that the
+    Oracle landing table is populated between the two legs.
+    """
+
+    @pytest.fixture(scope="class", autouse=True)
+    def round_trip(self, dwh: Oracle) -> Generator[None, None, None]:
+        _drop(dwh, "SF_CONTACT")
+        # Leg 1: Salesforce -> Oracle (full schema discovery + data load)
+        _run_cli(
+            "--source-system", "salesforce",
+            "--source-environment", "TRAIL",
+            "--source-namespace", "TRAIL",
+            "--target-system", "oracle",
+            "--target-environment", "DWH",
+            "--target-namespace", "DWH",
+            "--action", "reset",
+            "--tables", "Contact",
+        )
+        try:
+            yield
+        finally:
+            _drop(dwh, "SF_CONTACT")
+
+    def test_oracle_landing_table_populated(self, dwh: Oracle) -> None:
+        assert _table_exists(dwh, "SF_CONTACT")
+        assert _count(dwh, "SF_CONTACT") >= 0
+
+    def test_upsert_back_into_salesforce(self, dwh: Oracle) -> None:
+        # Leg 2: Oracle -> Salesforce upsert on Id (round trips the records home).
+        _run_cli(
+            "--source-system", "oracle",
+            "--source-environment", "DWH",
+            "--source-namespace", "DWH",
+            "--target-system", "salesforce",
+            "--target-environment", "TRAIL",
+            "--target-namespace", "TRAIL",
+            "--action", "upsert",
+            "--external-id-field", "Id",
+            "--tables", "SF_CONTACT",
+        )

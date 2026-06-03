@@ -27,6 +27,7 @@ __pycache__
 *egg-info*
 .coverage
 .coverage_html
+lib
 
 # Environment files
 *secret*

@@ -1,5 +1,6 @@
 """models.py"""
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable, Generic, TypeVar
 from collections.abc import Iterator
@@ -19,11 +20,11 @@ class PythonTypes(StrEnum):
     float = "float"
     boolean = "boolean"
     datetime = "datetime" # datetime.datetime + timezone format
-    date = "date"       # datetime.date
-    time = "time"       # datetime.time
+    date = "date"         # datetime.date
+    time = "time"         # datetime.time
     byte = "byte"
     bytearray = "bytearray"
-    json = "json"       # dict or list
+    json = "json"         # dict or list
 
 C = TypeVar("C", bound="Column")
 TABLE = TypeVar("TABLE", bound="Table")
@@ -67,16 +68,16 @@ class Table(Generic[C]):
     namespace: str | None = None
     prefix: str | None = None
     columns: list[C] = field(default_factory=list)
+    record_count: int | None = None
     properties: dict[str, Any] = field(default_factory=dict)
-
+    
     @property
     def primary_key_columns(self) -> list[C]:
         return [f for f in self.columns if f.is_primary_key]
-
+        
     @property
     def column_map(self) -> dict[str, C]:
         return {f.name: f for f in self.columns}
-
 
 @dataclass
 class Schema:
@@ -94,9 +95,12 @@ class Records:
 
 @runtime_checkable
 class DataSource(Protocol):
+    environment: str | None
+    namespace: str | None
+    def is_healthy(self) -> bool: ...
     def describe_schema(self, namespace: str | None = None) -> Schema: ...
     def describe_table(self, table: Table[Any]) -> Table: ...
-    def mutate_table(self, table: Table[Any]) -> Table: ...
+    def mutate_table(self, table: Table[Any], source_system: System | None = None) -> Table: ...
     def query(self, statement: str, **kwargs) -> Records: ...
     def get_records(self, table: Table, **kwargs) -> Records: ...
     def load_records(self, action: str, table: Table, records: Records, **kwargs) -> None: ...
