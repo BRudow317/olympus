@@ -3,17 +3,24 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "chiron"
+name = "charon"
 version = "1.0"
-description = "chiron"
+description = "charon"
 requires-python = ">=3.11"
 dependencies = [
     "cryptography",
     "httpx",
     "oracledb",
     "polars",
-    "tzdata"
+    "tzdata",
+    "pytest"
 ]
+# The presence of this table is the opt-in marker. With it, charon manages an
+# offline venv from vendored wheels. Remove it and charon reverts to plain
+# pass-through for this repo (no venv management), exactly like a generic job.
+[tool.charon]
+managed = true
+
 
 [project.optional-dependencies]
 dev = [
@@ -26,21 +33,11 @@ packages = ["src"]
 
 [tool.pyright]
 include = ["src", "tests"]
-extraPaths = ["./lib"]
+extraPaths = [".", "lib"]
+venvPath = "."  
+venv = ".venv"
 
 [tool.pytest.ini_options]
 pythonpath = [".", "lib"]
 testpaths = ["tests"]
 cache_dir = "./tests/pytest_cache"
-# addopts = "--cov=src --cov-report=term-missing --cov-report=html:tests/.coverage_html"
-
-# [tool.coverage.run]
-# source = ["src"]
-# data_file = "tests/.coverage"
-# omit = ["**/__pycache__/*"]
-# 
-# [tool.coverage.report]
-# exclude_lines = [
-#     "pragma: no cover",
-#     "if TYPE_CHECKING:",
-# ]

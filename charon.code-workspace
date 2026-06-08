@@ -4,8 +4,12 @@
       
       "path": ".", "default" : true
     },
+    {"path": "Q:/library/docs"},
+    {"path": "C:/Users/rmedi/stage"},
     {"path": "Q:/"},
     {"path": "C:\\Users\\rmedi\\OneDrive\\Documents\\PowerShell"},
+	
+  
   ],
   "settings": {
     "files.associations": {

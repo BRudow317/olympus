@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """app.py
 
-    python ./charon.py -v -l ./.logs \
-        --exec ./src/app.py \
-        --source-system salesforce \
-        --source-environment TRAIL \
-        --source-namespace TRAIL \
-        --target-system oracle \
-        --target-environment DWH \
-        --target-namespace DWH \
-        --action reset \
-        --tables Contact Account
+python ./charon.py -v -l ./.logs `
+    --exec ./src/app.py `
+    --source-system salesforce `
+    --source-environment TRAIL `
+    --source-namespace TRAIL `
+    --target-system oracle `
+    --target-environment DWH `
+    --target-namespace DWH `
+    --action upsert `
+    --tables Contact
 """
 from __future__ import annotations
 

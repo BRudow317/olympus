@@ -1,4 +1,4 @@
-# olympus
+# charon
 
 A Python library for managing data from Oracle and Salesforce behind a single common interface.
 
@@ -6,7 +6,7 @@ A Python library for managing data from Oracle and Salesforce behind a single co
 
 ## What it does
 
-Olympus wraps Oracle (oracledb) and Salesforce (REST + Bulk 2.0) behind a `DataSource` protocol.
+Charon wraps Oracle (oracledb) and Salesforce (REST + Bulk 2.0) behind a `DataSource` protocol.
 Any code that works with one works with the other. You can describe a schema, describe a table,
 run a raw query, or pull records -- all through the same four methods.
 
@@ -14,7 +14,7 @@ run a raw query, or pull records -- all through the same four methods.
 
 ## Setup
 
-Requires Python 3.11.
+Requires Python 3.11 or higher.
 
 ```shell
 py -3.11 -m venv .venv
@@ -27,28 +27,28 @@ py -3.11 -m venv .venv
 ```shell
 
 # bash
-python3 ./charon.py -v -l ./.logs \
-        --exec ./src/app.py \
-        --source-system salesforce \
-        --source-environment TRAIL \
-        --source-namespace TRAIL \
-        --target-system oracle \
-        --target-environment DWH \
-        --target-namespace DWH \
-        --action reset \
-        --tables Contact Account
+python3.11 ./charon.py -v -l ./.logs \
+    --exec ./src/app.py \
+    --source-system salesforce \
+    --source-environment TRAIL \
+    --source-namespace TRAIL \
+    --target-system oracle \
+    --target-environment DWH \
+    --target-namespace DWH \
+    --action reset \
+    --tables Asset Account
 
 # Powershell
 python ./charon.py -v -l ./.logs `
-        --exec ./src/app.py `
-        --source-system salesforce `
-        --source-environment TRAIL `
-        --source-namespace TRAIL `
-        --target-system oracle `
-        --target-environment DWH `
-        --target-namespace DWH `
-        --action reset `
-        --tables *
+    --exec ./src/app.py `
+    --source-system salesforce `
+    --source-environment TRAIL `
+    --source-namespace TRAIL `
+    --target-system oracle `
+    --target-environment DWH `
+    --target-namespace DWH `
+    --action reset `
+    --tables *
 ```
 
 
@@ -57,30 +57,31 @@ python ./charon.py -v -l ./.logs `
 
 ``` shell
 env=$1
-ORACLE_DBNAME_USER=myuser
-ORACLE_DBNAME_PASS=examplepassword123
-ORACLE_DBNAME_HOST=localhost
-ORACLE_DBNAME_PORT=1521
-ORACLE_DBNAME_SERVICE=exampledbservice
+oracle_dbname_user=myuser
+oracle_dbname_pass=examplepassword123
+oracle_dbname_host=localhost
+oracle_dbname_port=1521
+oracle_dbname_service=exampledbservice
 
-SF_ORGNAME_CONSUMER_KEY=exampleconsumerkey123
-SF_ORGNAME_CONSUMER_SECRET=examplesecretkey123
-SF_ORGNAME_BASE_URL=https://some-trailheadorg-8eqg8r-dev-ed.trailblaze.my.salesforce.com
+sf_orgname_consumer_key=exampleconsumerkey123
+sf_orgname_consumer_secret=examplesecretkey123
+sf_orgname_base_url=https://some-trailheadorg-8eqg8r-dev-ed.trailblaze.my.salesforce.com
 ```
 ---
 
 ### Other Important Configs
 ```jsonc
 {
-    "Salesforce_API_Version": "66.0",
-    "Salesforce_Auth_URI": "/services/oauth2/token",
-    "Salesforce_Callback_URL": "http://localhost:1717/OauthRedirect",
+    "salesforce_api_version": "66.0",
+    "salesforce_auth_uri": "/services/oauth2/token",
+    "salesforce_callback_url": "http://localhost:1717/OauthRedirect",
 }
 ```
 
 ## DataSource protocol
 
 ```python
+# ./src/DataSource.py
 @runtime_checkable
 class DataSource(Protocol):
     def describe_schema(self, namespace: str | None = None) -> Schema: ...
