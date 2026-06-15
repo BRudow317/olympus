@@ -6,9 +6,6 @@ from typing import Any, Protocol, runtime_checkable, Generic, TypeVar
 from collections.abc import Iterator
 from enum import StrEnum
 
-# ==============================================================================
-# 1. CORE ARCHITECTURAL ENUMERATIONS
-# ==============================================================================
 
 class System(StrEnum):
     oracle = 'oracle'
@@ -31,17 +28,8 @@ class PythonTypes(StrEnum):
     json = "json"         # dict or list
 
 
-# ==============================================================================
-# 2. GENERICS BOUNDS DEFINITIONS
-# ==============================================================================
-
 C = TypeVar("C", bound="Column")
 TABLE = TypeVar("TABLE", bound="Table")
-
-
-# ==============================================================================
-# 3. METADATA DATA REPRESENTATION LAYER
-# ==============================================================================
 
 @dataclass(kw_only=True)
 class Column:
@@ -101,10 +89,6 @@ class Schema:
     tables: list[Table] = field(default_factory=list)
 
 
-# ==============================================================================
-# 4. STREAM RECORD ENCAPSULATION
-# ==============================================================================
-
 @dataclass
 class Records:
     data: Iterator[dict[str, Any]] = field(default_factory=lambda: iter([]))
@@ -112,10 +96,6 @@ class Records:
     code: int = 200
     message: str = 'ok'
 
-
-# ==============================================================================
-# 5. CORE SYSTEM DRIVER STRATEGY CONTRACT
-# ==============================================================================
 
 @runtime_checkable
 class DataSource(Protocol):

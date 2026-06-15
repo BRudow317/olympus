@@ -224,14 +224,11 @@ class TestOracleSnake:
     @pytest.mark.parametrize(
         "value, expected",
         [
-            # camelCase is NOT split into underscores anymore: it is only
-            # upper-cased. Existing underscores are preserved as-is.
             ("LastName", "LASTNAME"),
             ("AccountId", "ACCOUNTID"),
             ("Id", "ID"),
             ("already_snake", "ALREADY_SNAKE"),
             ("LAST_NAME", "LAST_NAME"),
-            # Non-alphanumeric runs collapse to a single underscore, edges stripped.
             ("InPRS_PensionIdentification__c", "INPRS_PENSIONIDENTIFICATION__C"),
         ],
     )
@@ -243,10 +240,6 @@ class TestOracleSnake:
         assert to_oracle_snake(once) == once
 
     def test_camelcase_is_not_split(self) -> None:
-        # Deliberate design change: SF mixes camelCase and snake_case freely, so
-        # the canonical form no longer forces underscores at case boundaries.
-        # As a consequence, a camelCase name and its snake_case spelling are
-        # distinct canonical signatures.
         assert to_oracle_snake("LastName") == "LASTNAME"
         assert to_oracle_snake("LastName") != to_oracle_snake("LAST_NAME")
 
@@ -262,8 +255,6 @@ class TestOracleSnake:
 
 class TestCrossSystemName:
     def test_sf_to_oracle_prepends_sf(self) -> None:
-        # The prefix is added but the original case is preserved; Oracle folds
-        # the unquoted identifier to upper-case itself at DDL time.
         assert resolve_cross_system_name("Contact", System.salesforce, System.oracle) == "SF_Contact"
 
     def test_oracle_to_sf_strips_sf_prefix_on_return(self) -> None:

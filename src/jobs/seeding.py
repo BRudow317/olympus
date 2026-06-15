@@ -141,7 +141,9 @@ def seeding(
                 columns=described_source_table.columns,
             )
 
-            target_table: Table[Any] = target.mutate_table(target_stub, source_system=source_system)
+            target_table: Table[Any] = target.mutate_table(
+                target_stub, source_system=source_system, action=action
+            )
 
             records: Records = source.get_records(described_source_table)
             if records.code != 200:

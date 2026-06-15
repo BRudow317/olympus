@@ -306,7 +306,9 @@ class Salesforce(DataSource):
             
         if action == "insert":
             results = sobj.insert([_prep(r, exclude_id=True) for r in raw_rows])
-        elif action == "reset":
+        elif action in ("reset", "full_load"):
+            # Salesforce sobjects can't be dropped, so a full_load is the closest
+            # equivalent: delete every existing record, then insert fresh.
             existing = list(self._request_records(f"SELECT Id FROM {table.name}"))
             if existing:
                 sobj.delete([{"Id": r["Id"]} for r in existing])

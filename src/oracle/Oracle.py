@@ -230,8 +230,9 @@ class Oracle(DataSource):
                 statement: str = oracle_table.merge_sql()
             elif action == "update":
                 statement: str = oracle_table.update_sql()
-            elif action == "reset":
-                # truncate handled above
+            elif action in ("reset", "full_load"):
+                # reset truncated above; full_load dropped/recreated the table in
+                # mutate_table. Either way the table is empty, so just insert.
                 statement: str = oracle_table.insert_sql()
             else:
                 raise RuntimeError(f"class Oracle, function: load_records, action: Unknown value entered: {action} ")
@@ -546,7 +547,20 @@ class Oracle(DataSource):
         # 1. Cast the incoming table
         ora_table: OracleTable = to_oracle_table(table, enforce_constraints=enforce_constraints)
         ora_table.namespace = self.schema(table.namespace)
-        
+
+        # full_load: drop the table outright so it is recreated from scratch
+        # below. This wipes any schema drift (extra/renamed columns) as well as
+        # the data, giving a clean full refresh rather than a truncate-in-place.
+        if kwargs.get("action") == "full_load" and self.client.check_object_exists(
+            ora_table.name, schema=str(ora_table.namespace), object_type="TABLE"
+        ):
+            logger.info(
+                "full_load: dropping '%s' so it is recreated from scratch.",
+                ora_table.qualified_name,
+            )
+            self.client.execute(f"DROP TABLE {ora_table.qualified_name} CASCADE CONSTRAINTS")
+            self.client.commit()
+
         # Pull current structural data straight from the database
         fetched = self.client.all_tab_columns(str(ora_table.namespace), ora_table.name)
         

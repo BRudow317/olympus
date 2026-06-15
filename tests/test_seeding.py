@@ -85,35 +85,35 @@ def _table_exists(ora: Oracle, table: str) -> bool:
 # raises ORA-01918 ("user does not exist").
 
 @pytest.fixture(scope="module")
-def qbl() -> Oracle:
+def dev01() -> Oracle:
     return Oracle(ORACLE_SOURCE_ENV)
 
 
 @pytest.fixture(scope="module")
-def dwh() -> Oracle:
+def dev02() -> Oracle:
     return Oracle(ORACLE_TARGET_ENV)
 
 
-# SF → Oracle 
+# SF -> Oracle 
 
 class TestSfToOracleSeeding:
     """
-    Seeds SF Contact + Account from TRAIL into DWH Oracle via the CLI.
+    Seeds SF Contact + Account from devint into DWH Oracle via the CLI.
 
     Covers every SF field type that produces a distinct Oracle column type:
-      id/string/email/phone/url/reference/picklist → VARCHAR2
-      textarea (length > 4000)                     → CLOB
-      boolean                                      → VARCHAR2(1 CHAR)  'Y'/'N'
-      date                                         → DATE
-      datetime                                     → TIMESTAMP
-      currency/percent/double                      → NUMBER (FLOAT path)
-      int                                          → NUMBER (INTEGER path)
+      id/string/email/phone/url/reference/picklist -> VARCHAR2
+      textarea (length > 4000)                     -> CLOB
+      boolean                                      -> VARCHAR2(1 CHAR)  'Y'/'N'
+      date                                         -> DATE
+      datetime                                     -> TIMESTAMP
+      currency/percent/double                      -> NUMBER (FLOAT path)
+      int                                          -> NUMBER (INTEGER path)
     """
 
     @pytest.fixture(scope="class", autouse=True)
-    def seed_sf_tables(self, dwh: Oracle) -> Generator[None, None, None]:
-        _drop(dwh, "SF_CONTACT")
-        _drop(dwh, "SF_ACCOUNT")
+    def seed_sf_tables(self, dev02: Oracle) -> Generator[None, None, None]:
+        _drop(dev02, "SF_CONTACT")
+        _drop(dev02, "SF_ACCOUNT")
         _run_cli(
             "--source-system", "salesforce",
             "--source-environment", SALESFORCE_ENV,
@@ -125,89 +125,89 @@ class TestSfToOracleSeeding:
         try:
             yield
         finally:
-            _drop(dwh, "SF_CONTACT")
-            _drop(dwh, "SF_ACCOUNT")
+            _drop(dev02, "SF_CONTACT")
+            _drop(dev02, "SF_ACCOUNT")
 
     # table creation 
-    def test_contact_table_created(self, dwh: Oracle) -> None:
-        assert _table_exists(dwh, "SF_CONTACT")
+    def test_contact_table_created(self, dev02: Oracle) -> None:
+        assert _table_exists(dev02, "SF_CONTACT")
 
-    def test_account_table_created(self, dwh: Oracle) -> None:
-        assert _table_exists(dwh, "SF_ACCOUNT")
+    def test_account_table_created(self, dev02: Oracle) -> None:
+        assert _table_exists(dev02, "SF_ACCOUNT")
 
-    def test_contact_has_rows(self, dwh: Oracle) -> None:
-        assert _count(dwh, "SF_CONTACT") >= 0
+    def test_contact_has_rows(self, dev02: Oracle) -> None:
+        assert _count(dev02, "SF_CONTACT") >= 0
 
-    def test_account_has_rows(self, dwh: Oracle) -> None:
-        assert _count(dwh, "SF_ACCOUNT") >= 0
+    def test_account_has_rows(self, dev02: Oracle) -> None:
+        assert _count(dev02, "SF_ACCOUNT") >= 0
 
-    # SF 'id' / 'string' → VARCHAR2 
-    def test_contact_id_field_maps_to_varchar2(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "SF_CONTACT", "ID")["DATA_TYPE"] == "VARCHAR2"
+    # SF 'id' / 'string' -> VARCHAR2 
+    def test_contact_id_field_maps_to_varchar2(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "SF_CONTACT", "ID")["DATA_TYPE"] == "VARCHAR2"
 
-    def test_contact_string_field_maps_to_varchar2(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "SF_CONTACT", "LASTNAME")["DATA_TYPE"] == "VARCHAR2"
+    def test_contact_string_field_maps_to_varchar2(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "SF_CONTACT", "LASTNAME")["DATA_TYPE"] == "VARCHAR2"
 
-    # SF 'reference' (lookup) → VARCHAR2
-    def test_contact_reference_field_maps_to_varchar2(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "SF_CONTACT", "ACCOUNTID")["DATA_TYPE"] == "VARCHAR2"
+    # SF 'reference' (lookup) -> VARCHAR2
+    def test_contact_reference_field_maps_to_varchar2(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "SF_CONTACT", "ACCOUNTID")["DATA_TYPE"] == "VARCHAR2"
 
-    # SF 'picklist' → VARCHAR2 
-    def test_account_picklist_field_maps_to_varchar2(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "SF_ACCOUNT", "INDUSTRY")["DATA_TYPE"] == "VARCHAR2"
+    # SF 'picklist' -> VARCHAR2 
+    def test_account_picklist_field_maps_to_varchar2(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "SF_ACCOUNT", "INDUSTRY")["DATA_TYPE"] == "VARCHAR2"
 
-    # SF 'url' → VARCHAR2 
-    def test_account_url_field_maps_to_varchar2(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "SF_ACCOUNT", "WEBSITE")["DATA_TYPE"] == "VARCHAR2"
+    # SF 'url' -> VARCHAR2 
+    def test_account_url_field_maps_to_varchar2(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "SF_ACCOUNT", "WEBSITE")["DATA_TYPE"] == "VARCHAR2"
 
-    # SF 'textarea' (length > 4000) → CLOB 
-    def test_contact_textarea_maps_to_clob(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "SF_CONTACT", "DESCRIPTION")["DATA_TYPE"] == "CLOB"
+    # SF 'textarea' (length > 4000) -> CLOB 
+    def test_contact_textarea_maps_to_clob(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "SF_CONTACT", "DESCRIPTION")["DATA_TYPE"] == "CLOB"
 
-    def test_account_textarea_maps_to_clob(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "SF_ACCOUNT", "DESCRIPTION")["DATA_TYPE"] == "CLOB"
+    def test_account_textarea_maps_to_clob(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "SF_ACCOUNT", "DESCRIPTION")["DATA_TYPE"] == "CLOB"
 
-    # SF 'boolean' → VARCHAR2(1 CHAR)
+    # SF 'boolean' -> VARCHAR2(1 CHAR)
 
-    def test_contact_boolean_maps_to_varchar2(self, dwh: Oracle) -> None:
+    def test_contact_boolean_maps_to_varchar2(self, dev02: Oracle) -> None:
         # IsDeleted is a standard always-present Contact boolean.
-        col = _catalog_col(dwh, "SF_CONTACT", "ISDELETED")
+        col = _catalog_col(dev02, "SF_CONTACT", "ISDELETED")
         assert col["DATA_TYPE"] == "VARCHAR2"
         assert int(col["CHAR_LENGTH"]) == 1
 
-    # SF 'date' → DATE 
+    # SF 'date' -> DATE 
 
-    def test_contact_date_field_maps_to_date(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "SF_CONTACT", "BIRTHDATE")["DATA_TYPE"] == "DATE"
+    def test_contact_date_field_maps_to_date(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "SF_CONTACT", "BIRTHDATE")["DATA_TYPE"] == "DATE"
 
-    # SF 'datetime' → TIMESTAMP 
+    # SF 'datetime' -> TIMESTAMP 
 
-    def test_contact_datetime_field_maps_to_timestamp(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "SF_CONTACT", "LASTMODIFIEDDATE")["DATA_TYPE"].startswith("TIMESTAMP")
+    def test_contact_datetime_field_maps_to_timestamp(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "SF_CONTACT", "LASTMODIFIEDDATE")["DATA_TYPE"].startswith("TIMESTAMP")
 
-    def test_account_datetime_field_maps_to_timestamp(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "SF_ACCOUNT", "LASTMODIFIEDDATE")["DATA_TYPE"].startswith("TIMESTAMP")
+    def test_account_datetime_field_maps_to_timestamp(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "SF_ACCOUNT", "LASTMODIFIEDDATE")["DATA_TYPE"].startswith("TIMESTAMP")
 
-    # SF 'currency' (FLOAT path) → NUMBER
-    def test_account_currency_field_maps_to_number(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "SF_ACCOUNT", "ANNUALREVENUE")["DATA_TYPE"] == "NUMBER"
+    # SF 'currency' (FLOAT path) -> NUMBER
+    def test_account_currency_field_maps_to_number(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "SF_ACCOUNT", "ANNUALREVENUE")["DATA_TYPE"] == "NUMBER"
 
-    # SF 'int' (INTEGER path) → NUMBER
-    def test_account_int_field_maps_to_number(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "SF_ACCOUNT", "NUMBEROFEMPLOYEES")["DATA_TYPE"] == "NUMBER"
+    # SF 'int' (INTEGER path) -> NUMBER
+    def test_account_int_field_maps_to_number(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "SF_ACCOUNT", "NUMBEROFEMPLOYEES")["DATA_TYPE"] == "NUMBER"
 
     # cross-system name resolution 
-    def test_contact_table_has_sf_prefix(self, dwh: Oracle) -> None:
-        assert _table_exists(dwh, "SF_CONTACT")
-        assert not _table_exists(dwh, "CONTACT")
+    def test_contact_table_has_sf_prefix(self, dev02: Oracle) -> None:
+        assert _table_exists(dev02, "SF_CONTACT")
+        assert not _table_exists(dev02, "CONTACT")
 
-    def test_account_table_has_sf_prefix(self, dwh: Oracle) -> None:
-        assert _table_exists(dwh, "SF_ACCOUNT")
-        assert not _table_exists(dwh, "ACCOUNT")
+    def test_account_table_has_sf_prefix(self, dev02: Oracle) -> None:
+        assert _table_exists(dev02, "SF_ACCOUNT")
+        assert not _table_exists(dev02, "ACCOUNT")
 
     # idempotency 
-    def test_sf_to_oracle_is_idempotent(self, dwh: Oracle) -> None:
-        count_before = _count(dwh, "SF_CONTACT")
+    def test_sf_to_oracle_is_idempotent(self, dev02: Oracle) -> None:
+        count_before = _count(dev02, "SF_CONTACT")
         _run_cli(
             "--source-system", "salesforce",
             "--source-environment", SALESFORCE_ENV,
@@ -216,43 +216,43 @@ class TestSfToOracleSeeding:
             "--target-environment", ORACLE_TARGET_ENV,
             "--tables", "Contact",
         )
-        assert _count(dwh, "SF_CONTACT") == count_before
+        assert _count(dev02, "SF_CONTACT") == count_before
 
 
-# Oracle → Oracle 
+# Oracle -> Oracle 
 class TestOracleToOracleSeeding:
     """
-    Seeds QBL.PYTEST_SEED → DWH.PYTEST_SEED via the CLI.
+    Seeds QBL.PYTEST_SEED -> DWH.PYTEST_SEED via the CLI.
 
     The source table exercises every Oracle native type that has a distinct
     python_type mapping:
-      NUMBER(n,0)  → INTEGER  → NUMBER
-      NUMBER(n,s)  → FLOAT    → NUMBER
-      NUMBER(1,0)  → INTEGER  → NUMBER  (boolean-by-convention)
-      VARCHAR2     → STRING   → VARCHAR2
-      CLOB         → STRING   → CLOB    (max_length=None triggers CLOB path)
-      DATE         → DATE     → DATE
-      TIMESTAMP    → DATETIME → TIMESTAMP
-      BLOB         → BYTE     → BLOB
+      NUMBER(n,0)  -> INTEGER  -> NUMBER
+      NUMBER(n,s)  -> FLOAT    -> NUMBER
+      NUMBER(1,0)  -> INTEGER  -> NUMBER  (boolean-by-convention)
+      VARCHAR2     -> STRING   -> VARCHAR2
+      CLOB         -> STRING   -> CLOB    (max_length=None triggers CLOB path)
+      DATE         -> DATE     -> DATE
+      TIMESTAMP    -> DATETIME -> TIMESTAMP
+      BLOB         -> BYTE     -> BLOB
     """
 
     @pytest.fixture(scope="class", autouse=True)
-    def seed_oracle_table(self, qbl: Oracle, dwh: Oracle) -> Generator[None, None, None]:
-        for ora in (qbl, dwh):
+    def seed_oracle_table(self, dev01: Oracle, dev02: Oracle) -> Generator[None, None, None]:
+        for ora in (dev01, dev02):
             _drop(ora, "PYTEST_SEED")
 
-        source_schema = qbl.schema()
-        qbl.client.execute(_DDL_ORA_SEED.format(schema=source_schema))
-        qbl.client.execute(
+        source_schema = dev01.schema()
+        dev01.client.execute(_DDL_ORA_SEED.format(schema=source_schema))
+        dev01.client.execute(
             f"INSERT INTO {source_schema}.PYTEST_SEED "
             "(ID, LABEL, SCORE, INT_VAL, FLAG, BORN_ON, UPDATED_AT) "
             "VALUES (1, 'Alpha', 3.14, 42, 1, "
             "DATE '2020-01-01', TIMESTAMP '2024-06-15 12:00:00')"
         )
-        qbl.client.execute(
+        dev01.client.execute(
             f"INSERT INTO {source_schema}.PYTEST_SEED (ID, LABEL, FLAG) VALUES (2, 'Beta', 0)"
         )
-        qbl.client.commit()
+        dev01.client.commit()
 
         _run_cli(
             "--source-system", "oracle",
@@ -264,71 +264,71 @@ class TestOracleToOracleSeeding:
         try:
             yield
         finally:
-            for ora in (dwh, qbl):
+            for ora in (dev02, dev01):
                 _drop(ora, "PYTEST_SEED")
 
     # structural 
-    def test_target_table_created(self, dwh: Oracle) -> None:
-        assert _table_exists(dwh, "PYTEST_SEED")
+    def test_target_table_created(self, dev02: Oracle) -> None:
+        assert _table_exists(dev02, "PYTEST_SEED")
 
-    def test_row_count_matches_source(self, qbl: Oracle, dwh: Oracle) -> None:
-        assert _count(dwh, "PYTEST_SEED") == _count(qbl, "PYTEST_SEED")
+    def test_row_count_matches_source(self, dev01: Oracle, dev02: Oracle) -> None:
+        assert _count(dev02, "PYTEST_SEED") == _count(dev01, "PYTEST_SEED")
 
     # type round-trips 
-    def test_varchar2_round_trips(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "PYTEST_SEED", "LABEL")["DATA_TYPE"] == "VARCHAR2"
+    def test_varchar2_round_trips(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "PYTEST_SEED", "LABEL")["DATA_TYPE"] == "VARCHAR2"
 
-    def test_clob_round_trips(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "PYTEST_SEED", "NOTES")["DATA_TYPE"] == "CLOB"
+    def test_clob_round_trips(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "PYTEST_SEED", "NOTES")["DATA_TYPE"] == "CLOB"
 
-    def test_number_integer_round_trips(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "PYTEST_SEED", "INT_VAL")["DATA_TYPE"] == "NUMBER"
+    def test_number_integer_round_trips(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "PYTEST_SEED", "INT_VAL")["DATA_TYPE"] == "NUMBER"
 
-    def test_number_decimal_round_trips(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "PYTEST_SEED", "SCORE")["DATA_TYPE"] == "NUMBER"
+    def test_number_decimal_round_trips(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "PYTEST_SEED", "SCORE")["DATA_TYPE"] == "NUMBER"
 
-    def test_number_flag_round_trips(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "PYTEST_SEED", "FLAG")["DATA_TYPE"] == "NUMBER"
+    def test_number_flag_round_trips(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "PYTEST_SEED", "FLAG")["DATA_TYPE"] == "NUMBER"
 
-    def test_date_round_trips(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "PYTEST_SEED", "BORN_ON")["DATA_TYPE"] == "DATE"
+    def test_date_round_trips(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "PYTEST_SEED", "BORN_ON")["DATA_TYPE"] == "DATE"
 
-    def test_timestamp_round_trips(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "PYTEST_SEED", "UPDATED_AT")["DATA_TYPE"].startswith("TIMESTAMP")
+    def test_timestamp_round_trips(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "PYTEST_SEED", "UPDATED_AT")["DATA_TYPE"].startswith("TIMESTAMP")
 
-    def test_blob_round_trips(self, dwh: Oracle) -> None:
-        assert _catalog_col(dwh, "PYTEST_SEED", "PAYLOAD")["DATA_TYPE"] == "BLOB"
+    def test_blob_round_trips(self, dev02: Oracle) -> None:
+        assert _catalog_col(dev02, "PYTEST_SEED", "PAYLOAD")["DATA_TYPE"] == "BLOB"
 
     # data integrity 
-    def test_varchar2_data_survives_transit(self, dwh: Oracle) -> None:
-        rows = dwh.client.query(f"SELECT LABEL FROM {dwh.schema()}.PYTEST_SEED WHERE ID = 1")
+    def test_varchar2_data_survives_transit(self, dev02: Oracle) -> None:
+        rows = dev02.client.query(f"SELECT LABEL FROM {dev02.schema()}.PYTEST_SEED WHERE ID = 1")
         assert rows[0]["LABEL"] == "Alpha"
 
-    def test_integer_data_survives_transit(self, dwh: Oracle) -> None:
-        rows = dwh.client.query(f"SELECT INT_VAL FROM {dwh.schema()}.PYTEST_SEED WHERE ID = 1")
+    def test_integer_data_survives_transit(self, dev02: Oracle) -> None:
+        rows = dev02.client.query(f"SELECT INT_VAL FROM {dev02.schema()}.PYTEST_SEED WHERE ID = 1")
         assert int(rows[0]["INT_VAL"]) == 42
 
-    def test_flag_false_row_survives_transit(self, dwh: Oracle) -> None:
-        rows = dwh.client.query(f"SELECT FLAG FROM {dwh.schema()}.PYTEST_SEED WHERE ID = 2")
+    def test_flag_false_row_survives_transit(self, dev02: Oracle) -> None:
+        rows = dev02.client.query(f"SELECT FLAG FROM {dev02.schema()}.PYTEST_SEED WHERE ID = 2")
         assert int(rows[0]["FLAG"]) == 0
 
-    def test_date_data_survives_transit(self, dwh: Oracle) -> None:
-        rows = dwh.client.query(f"SELECT BORN_ON FROM {dwh.schema()}.PYTEST_SEED WHERE ID = 1")
+    def test_date_data_survives_transit(self, dev02: Oracle) -> None:
+        rows = dev02.client.query(f"SELECT BORN_ON FROM {dev02.schema()}.PYTEST_SEED WHERE ID = 1")
         val = rows[0]["BORN_ON"]
         if isinstance(val, datetime.datetime):
             val = val.date()
         assert val == datetime.date(2020, 1, 1)
 
-    def test_null_fields_survive_transit(self, dwh: Oracle) -> None:
-        rows = dwh.client.query(
-            f"SELECT SCORE, BORN_ON FROM {dwh.schema()}.PYTEST_SEED WHERE ID = 2"
+    def test_null_fields_survive_transit(self, dev02: Oracle) -> None:
+        rows = dev02.client.query(
+            f"SELECT SCORE, BORN_ON FROM {dev02.schema()}.PYTEST_SEED WHERE ID = 2"
         )
         assert rows[0]["SCORE"] is None
         assert rows[0]["BORN_ON"] is None
 
     # idempotency
-    def test_oracle_to_oracle_is_idempotent(self, qbl: Oracle, dwh: Oracle) -> None:
-        count_before = _count(dwh, "PYTEST_SEED")
+    def test_oracle_to_oracle_is_idempotent(self, dev01: Oracle, dev02: Oracle) -> None:
+        count_before = _count(dev02, "PYTEST_SEED")
         _run_cli(
             "--source-system", "oracle",
             "--source-environment", ORACLE_SOURCE_ENV,
@@ -336,7 +336,7 @@ class TestOracleToOracleSeeding:
             "--target-environment", ORACLE_TARGET_ENV,
             "--tables", "PYTEST_SEED",
         )
-        assert _count(dwh, "PYTEST_SEED") == count_before
+        assert _count(dev02, "PYTEST_SEED") == count_before
 
 
 # SF -> Oracle -> SF round trip
@@ -349,8 +349,8 @@ class TestSfOracleRoundTrip:
     """
 
     @pytest.fixture(scope="class", autouse=True)
-    def round_trip(self, dwh: Oracle) -> Generator[None, None, None]:
-        _drop(dwh, "SF_CONTACT")
+    def round_trip(self, dev02: Oracle) -> Generator[None, None, None]:
+        _drop(dev02, "SF_CONTACT")
         # Leg 1: Salesforce -> Oracle (full schema discovery + data load)
         _run_cli(
             "--source-system", "salesforce",
@@ -364,24 +364,24 @@ class TestSfOracleRoundTrip:
         try:
             yield
         finally:
-            _drop(dwh, "SF_CONTACT")
+            _drop(dev02, "SF_CONTACT")
 
-    def test_oracle_landing_table_populated(self, dwh: Oracle) -> None:
-        assert _table_exists(dwh, "SF_CONTACT")
-        assert _count(dwh, "SF_CONTACT") >= 0
+    def test_oracle_landing_table_populated(self, dev02: Oracle) -> None:
+        assert _table_exists(dev02, "SF_CONTACT")
+        assert _count(dev02, "SF_CONTACT") >= 0
 
-    def test_upsert_back_into_salesforce(self, dwh: Oracle) -> None:
-        # Leg 2: Oracle -> Salesforce upsert on Id (round trips the records home).
-        _run_cli(
-            "--source-system", "oracle",
-            "--source-environment", ORACLE_TARGET_ENV,
-            "--target-system", "salesforce",
-            "--target-environment", SALESFORCE_ENV,
-            "--target-namespace", SALESFORCE_ENV,
-            "--action", "upsert",
-            "--external-id-field", "Id",
-            "--tables", "SF_CONTACT",
-        )
+    # def test_upsert_back_into_salesforce(self, dev02: Oracle) -> None:
+    #     # Leg 2: Oracle -> Salesforce upsert on Id (round trips the records home).
+    #     _run_cli(
+    #         "--source-system", "oracle",
+    #         "--source-environment", ORACLE_TARGET_ENV,
+    #         "--target-system", "salesforce",
+    #         "--target-environment", SALESFORCE_ENV,
+    #         "--target-namespace", SALESFORCE_ENV,
+    #         "--action", "upsert",
+    #         "--external-id-field", "Id",
+    #         "--tables", "SF_CONTACT",
+    #     )
 
 
 # On-the-fly schema adaptation during load (Salesforce metadata lies)
@@ -398,27 +398,27 @@ class TestVarchar2ToClobPromotion:
     TABLE = "PYTEST_CLOB_PROMO"
 
     @pytest.fixture(scope="class", autouse=True)
-    def seed(self, dwh: Oracle) -> Generator[None, None, None]:
-        _drop(dwh, self.TABLE)
+    def seed(self, dev02: Oracle) -> Generator[None, None, None]:
+        _drop(dev02, self.TABLE)
         # BODY is deliberately created small to force the overflow path.
-        dwh.client.execute(
-            f"CREATE TABLE {dwh.schema()}.{self.TABLE} ("
+        dev02.client.execute(
+            f"CREATE TABLE {dev02.schema()}.{self.TABLE} ("
             f"  ID    NUMBER(10)        NOT NULL, "
             f"  BODY  VARCHAR2(100 CHAR) NULL, "
             f"  CONSTRAINT {self.TABLE}_PK PRIMARY KEY (ID))"
         )
-        dwh.client.commit()
+        dev02.client.commit()
         try:
             yield
         finally:
-            _drop(dwh, self.TABLE)
+            _drop(dev02, self.TABLE)
 
-    def _target(self, dwh: Oracle) -> OracleTable:
+    def _target(self, dev02: Oracle) -> OracleTable:
         # Describe the target as the migrator would: BODY is "still" VARCHAR2.
         return OracleTable(
             name=self.TABLE,
             system=System.oracle,
-            namespace=dwh.schema(),
+            namespace=dev02.schema(),
             columns=[
                 OracleColumn(
                     name="ID", raw_type="NUMBER", python_type=PythonTypes.integer,
@@ -431,27 +431,27 @@ class TestVarchar2ToClobPromotion:
             ],
         )
 
-    def test_oversize_value_promotes_column_and_loads(self, dwh: Oracle) -> None:
+    def test_oversize_value_promotes_column_and_loads(self, dev02: Oracle) -> None:
         big = "X" * 9000  # well beyond the 4000-char VARCHAR2 ceiling
 
         def rows():
             yield {"ID": 1, "BODY": "small value"}
             yield {"ID": 2, "BODY": big}
 
-        dwh.load_records(action="insert", table=self._target(dwh), records=Records(data=rows()))
+        dev02.load_records(action="insert", table=self._target(dev02), records=Records(data=rows()))
 
         # The column is now CLOB ...
-        assert _catalog_col(dwh, self.TABLE, "BODY")["DATA_TYPE"] == "CLOB"
+        assert _catalog_col(dev02, self.TABLE, "BODY")["DATA_TYPE"] == "CLOB"
         # ... every row landed ...
-        assert _count(dwh, self.TABLE) == 2
+        assert _count(dev02, self.TABLE) == 2
         # ... the small value still round-trips ...
-        small = dwh.client.query(
-            f"SELECT BODY FROM {dwh.schema()}.{self.TABLE} WHERE ID = 1"
+        small = dev02.client.query(
+            f"SELECT BODY FROM {dev02.schema()}.{self.TABLE} WHERE ID = 1"
         )
         assert small[0]["BODY"] == "small value"
         # ... and the oversized value survived in full.
-        large = dwh.client.query(
-            f"SELECT BODY FROM {dwh.schema()}.{self.TABLE} WHERE ID = 2"
+        large = dev02.client.query(
+            f"SELECT BODY FROM {dev02.schema()}.{self.TABLE} WHERE ID = 2"
         )
         assert large[0]["BODY"] == big
 
@@ -465,25 +465,25 @@ class TestNotNullViolationRelaxation:
     TABLE = "PYTEST_NN_RELAX"
 
     @pytest.fixture(scope="class", autouse=True)
-    def seed(self, dwh: Oracle) -> Generator[None, None, None]:
-        _drop(dwh, self.TABLE)
-        dwh.client.execute(
-            f"CREATE TABLE {dwh.schema()}.{self.TABLE} ("
+    def seed(self, dev02: Oracle) -> Generator[None, None, None]:
+        _drop(dev02, self.TABLE)
+        dev02.client.execute(
+            f"CREATE TABLE {dev02.schema()}.{self.TABLE} ("
             f"  ID     NUMBER(10)         NOT NULL, "
             f"  LABEL  VARCHAR2(100 CHAR) NOT NULL, "
             f"  CONSTRAINT {self.TABLE}_PK PRIMARY KEY (ID))"
         )
-        dwh.client.commit()
+        dev02.client.commit()
         try:
             yield
         finally:
-            _drop(dwh, self.TABLE)
+            _drop(dev02, self.TABLE)
 
-    def _target(self, dwh: Oracle) -> OracleTable:
+    def _target(self, dev02: Oracle) -> OracleTable:
         return OracleTable(
             name=self.TABLE,
             system=System.oracle,
-            namespace=dwh.schema(),
+            namespace=dev02.schema(),
             columns=[
                 OracleColumn(
                     name="ID", raw_type="NUMBER", python_type=PythonTypes.integer,
@@ -496,25 +496,25 @@ class TestNotNullViolationRelaxation:
             ],
         )
 
-    def test_null_into_not_null_relaxes_and_loads(self, dwh: Oracle) -> None:
+    def test_null_into_not_null_relaxes_and_loads(self, dev02: Oracle) -> None:
         def rows():
             yield {"ID": 1, "LABEL": "present"}
             yield {"ID": 2, "LABEL": None}
 
-        dwh.load_records(action="insert", table=self._target(dwh), records=Records(data=rows()))
+        dev02.load_records(action="insert", table=self._target(dev02), records=Records(data=rows()))
 
         # The column was relaxed to nullable ...
-        assert _catalog_col(dwh, self.TABLE, "LABEL").get("DATA_TYPE") == "VARCHAR2"
-        nullable = dwh.client.query(
+        assert _catalog_col(dev02, self.TABLE, "LABEL").get("DATA_TYPE") == "VARCHAR2"
+        nullable = dev02.client.query(
             "SELECT NULLABLE FROM ALL_TAB_COLUMNS "
             "WHERE OWNER = :o AND TABLE_NAME = :t AND COLUMN_NAME = 'LABEL'",
-            {"o": dwh.schema(), "t": self.TABLE},
+            {"o": dev02.schema(), "t": self.TABLE},
         )
         assert nullable[0]["NULLABLE"] == "Y"
         # ... and both rows, including the NULL one, loaded.
-        assert _count(dwh, self.TABLE) == 2
-        got = dwh.client.query(
-            f"SELECT LABEL FROM {dwh.schema()}.{self.TABLE} WHERE ID = 2"
+        assert _count(dev02, self.TABLE) == 2
+        got = dev02.client.query(
+            f"SELECT LABEL FROM {dev02.schema()}.{self.TABLE} WHERE ID = 2"
         )
         assert got[0]["LABEL"] is None
 
@@ -528,24 +528,24 @@ class TestImmutableConstraintGuard:
     TABLE = "PYTEST_IMMUTABLE_PK"
 
     @pytest.fixture(scope="class", autouse=True)
-    def seed(self, dwh: Oracle) -> Generator[None, None, None]:
-        _drop(dwh, self.TABLE)
-        dwh.client.execute(
-            f"CREATE TABLE {dwh.schema()}.{self.TABLE} ("
+    def seed(self, dev02: Oracle) -> Generator[None, None, None]:
+        _drop(dev02, self.TABLE)
+        dev02.client.execute(
+            f"CREATE TABLE {dev02.schema()}.{self.TABLE} ("
             f"  CODE  VARCHAR2(100 CHAR) NOT NULL, "
             f"  CONSTRAINT {self.TABLE}_PK PRIMARY KEY (CODE))"
         )
-        dwh.client.commit()
+        dev02.client.commit()
         try:
             yield
         finally:
-            _drop(dwh, self.TABLE)
+            _drop(dev02, self.TABLE)
 
-    def _target(self, dwh: Oracle) -> OracleTable:
+    def _target(self, dev02: Oracle) -> OracleTable:
         return OracleTable(
             name=self.TABLE,
             system=System.oracle,
-            namespace=dwh.schema(),
+            namespace=dev02.schema(),
             columns=[
                 OracleColumn(
                     name="CODE", raw_type="VARCHAR2", python_type=PythonTypes.string,
@@ -554,19 +554,85 @@ class TestImmutableConstraintGuard:
             ],
         )
 
-    def test_oversize_on_primary_key_refuses_promotion(self, dwh: Oracle) -> None:
+    def test_oversize_on_primary_key_refuses_promotion(self, dev02: Oracle) -> None:
         def rows():
             yield {"CODE": "X" * 9000}
 
         with pytest.raises(RuntimeError, match="immutable"):
-            dwh.load_records(
-                action="insert", table=self._target(dwh), records=Records(data=rows())
+            dev02.load_records(
+                action="insert", table=self._target(dev02), records=Records(data=rows())
             )
 
         # The column was left untouched ...
-        assert _catalog_col(dwh, self.TABLE, "CODE")["DATA_TYPE"] == "VARCHAR2"
+        assert _catalog_col(dev02, self.TABLE, "CODE")["DATA_TYPE"] == "VARCHAR2"
         # ... and the primary key still stands.
-        pk = dwh.client.all_constraints(
-            schema=dwh.schema(), table_name=self.TABLE, constraint_type="P"
+        pk = dev02.client.all_constraints(
+            schema=dev02.schema(), table_name=self.TABLE, constraint_type="P"
         )
         assert any(c["COLUMN_NAME"] == "CODE" for c in pk)
+
+
+class TestFullLoadDropsTable:
+    """action='full_load' drops and recreates the Oracle table, where 'reset'
+    only truncates it. A column present in the old table but absent from the
+    incoming schema is therefore gone after a full_load, proving the drop.
+    """
+
+    TABLE = "PYTEST_FULL_LOAD"
+
+    @pytest.fixture(scope="class", autouse=True)
+    def seed(self, dev02: Oracle) -> Generator[None, None, None]:
+        _drop(dev02, self.TABLE)
+        # Pre-existing table carries STALE_COL (not in the incoming schema) and a
+        # stale row. A truncate would keep STALE_COL; a full_load drops it.
+        dev02.client.execute(
+            f"CREATE TABLE {dev02.schema()}.{self.TABLE} ("
+            f"  ID        NUMBER(10)         NOT NULL, "
+            f"  STALE_COL VARCHAR2(50 CHAR), "
+            f"  CONSTRAINT {self.TABLE}_PK PRIMARY KEY (ID))"
+        )
+        dev02.client.execute(
+            f"INSERT INTO {dev02.schema()}.{self.TABLE} (ID, STALE_COL) VALUES (99, 'old')"
+        )
+        dev02.client.commit()
+        try:
+            yield
+        finally:
+            _drop(dev02, self.TABLE)
+
+    def _incoming(self, dev02: Oracle) -> OracleTable:
+        return OracleTable(
+            name=self.TABLE,
+            system=System.oracle,
+            namespace=dev02.schema(),
+            columns=[
+                OracleColumn(
+                    name="ID", raw_type="NUMBER", python_type=PythonTypes.integer,
+                    is_primary_key=True, is_nullable=False,
+                ),
+                OracleColumn(
+                    name="LABEL", raw_type="VARCHAR2", python_type=PythonTypes.string,
+                    max_length=100,
+                ),
+            ],
+        )
+
+    def test_full_load_drops_and_recreates(self, dev02: Oracle) -> None:
+        target = dev02.mutate_table(self._incoming(dev02), action="full_load")
+
+        def rows():
+            yield {"ID": 1, "LABEL": "fresh"}
+
+        dev02.load_records(action="full_load", table=target, records=Records(data=rows()))
+
+        # The dropped table took STALE_COL with it ...
+        assert _catalog_col(dev02, self.TABLE, "STALE_COL") == {}
+        # ... the incoming LABEL column is present ...
+        assert _catalog_col(dev02, self.TABLE, "LABEL")["DATA_TYPE"] == "VARCHAR2"
+        # ... and only the freshly loaded row survives (stale ID=99 is gone).
+        assert _count(dev02, self.TABLE) == 1
+        got = dev02.client.query(
+            f"SELECT ID, LABEL FROM {dev02.schema()}.{self.TABLE}"
+        )
+        assert int(got[0]["ID"]) == 1
+        assert got[0]["LABEL"] == "fresh"

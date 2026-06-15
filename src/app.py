@@ -1,17 +1,4 @@
-#!/usr/bin/env python3
-"""app.py
-
-python ./charon.py -v -l ./.logs `
-    --exec ./src/app.py `
-    --source-system salesforce `
-    --source-environment TRAIL `
-    --source-namespace TRAIL `
-    --target-system oracle `
-    --target-environment DWH `
-    --target-namespace DWH `
-    --action upsert `
-    --tables Contact
-"""
+"""app.py"""
 from __future__ import annotations
 import argparse
 import logging
@@ -43,8 +30,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=False,
         type=str,
         default="reset",
-        choices=["reset", "insert", "upsert", "update"],
-        help="How records are written to the target (default: reset).",
+        choices=["reset", "insert", "upsert", "update", "full_load"],
+        help=(
+            "How records are written to the target (default: reset). "
+            "'reset' truncates then inserts; 'full_load' drops and recreates the "
+            "table from scratch (Oracle) / deletes all rows then inserts (Salesforce)."
+        ),
     )
     parser.add_argument(
         "--external-id-field",

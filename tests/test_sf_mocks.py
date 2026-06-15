@@ -1,6 +1,6 @@
 """test_sf_mocks.py -- canned Salesforce REST API responses for offline tests.
 
-These constants mirror the real shapes returned by the TRAIL dev org so the SF
+These constants mirror the real shapes returned by the devint dev org so the SF
 adapter (SfClient / Salesforce / SfModels) can be exercised without a live
 connection. Two flavours are provided:
 
