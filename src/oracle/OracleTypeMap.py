@@ -18,6 +18,28 @@ from src.oracle.OracleModels import (
     DATE_FMT
 )
 
+# ALL_CONSTRAINTS.CONSTRAINT_TYPE codes that on-the-fly schema adaptation must
+# never silently drop or alter. Primary ('P'), unique ('U') and foreign ('R')
+# keys define structural integrity we refuse to disturb when promoting a column
+# to CLOB (which drops the column and cascades its constraints). A NOT NULL /
+# check ('C') is intentionally excluded: Salesforce's nullability metadata is
+# untrusted, so those are relaxed on demand rather than protected.
+IMMUTABLE_CONSTRAINT_TYPES: frozenset[str] = frozenset({"P", "U", "R"})
+
+
+def immutable_constraints(constraints: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Filter rows from OracleClient.all_constraints() down to the immutable ones.
+
+    Returns the constraint rows whose CONSTRAINT_TYPE is in
+    IMMUTABLE_CONSTRAINT_TYPES, i.e. the keys that must not be dropped or altered
+    by on-the-fly column adaptation.
+    """
+    return [
+        c for c in constraints
+        if str(c.get("CONSTRAINT_TYPE", "")).upper() in IMMUTABLE_CONSTRAINT_TYPES
+    ]
+
+
 def oracle_to_python(raw_type: str, scale: int | None = None, max_length: int | None = None) -> PythonTypes:
     raw_upper = raw_type.upper()
     

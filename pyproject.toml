@@ -13,7 +13,8 @@ dependencies = [
     "oracledb",
     "polars",
     "tzdata",
-    "pytest"
+    "pytest",
+    "pyarrow"
 ]
 # The presence of this table is the opt-in marker. With it, charon manages an
 # offline venv from vendored wheels. Remove it and charon reverts to plain

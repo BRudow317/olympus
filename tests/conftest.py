@@ -5,8 +5,8 @@ from pathlib import Path
 
 from charon import parse_config_file
 
-
-
+ORACLE_ENVIRONMENTS = ["dev01", "dev02"]
+SALESFORCE_ENVIRONMENTS = ["devint"]
 
 def _load_env() -> None:
 

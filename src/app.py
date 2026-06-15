@@ -13,14 +13,16 @@ python ./charon.py -v -l ./.logs `
     --tables Contact
 """
 from __future__ import annotations
-
 import argparse
 import logging
+logger: logging.Logger = logging.getLogger(__name__)
 import os
 from src.models import System
-from src.seeding import seeding
-
-logger: logging.Logger = logging.getLogger(__name__)
+from src.jobs.seeding import seeding
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from src.models import DataSource
+    from src.oracle.Oracle import Oracle
 
 # Hardcoded: not a stage/rundeck-scripts/.env config value, so it is not read
 # from the environment. charon.py owns all env/.env handling.
@@ -59,22 +61,50 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         nargs="+",
         help="list of Table/object names to migrate separated by a space, or '*' for the whole schema.",
     )
+    parser.add_argument(
+        "--scripts",
+        required=False,
+        type=str,
+        default=[],
+        nargs="+",
+        help="Optional post-migration scripts (e.g. .sql files) to run on the target after seeding.",
+    )
     return parser.parse_args(argv)
 
+def strip_rundeck_prefix(env_name: str):
+    """Sanitizes configuration parameters passed down from automated Rundeck job runners."""
+    env_name = env_name.lower()
+    if env_name.startswith('sf_'):
+        env_name = env_name.lstrip('sf_')
+    return env_name
 
 def main(argv: list[str] | None = None) -> int:
+    """Invokes seeding actions across boundaries and triggers contextual downstream scripts."""
     args: argparse.Namespace = parse_args(argv)
-    return seeding(
+
+    source_env = strip_rundeck_prefix(args.source_environment) or ""
+    target_env = strip_rundeck_prefix(args.target_environment) or ""
+
+    # Seed data from source to target
+    target_system: DataSource = seeding(
         source_system=args.source_system,
-        source_environment=args.source_environment,
+        source_environment=source_env,
         source_namespace=args.source_namespace,
         target_system=args.target_system,
-        target_environment=args.target_environment,
+        target_environment=target_env,
         target_namespace=args.target_namespace,
         tables=args.tables,
         action=args.action,
-        external_id_field=args.external_id_field,
+        external_id_field=args.external_id_field
     )
+
+    if args.scripts:
+        post_scripts: list[str] = args.scripts
+        for job in post_scripts:
+            if '.sql' in job and isinstance(target_system, Oracle):
+                target_system.client.script_runner(job)
+    
+    return 0
 
 
 def cmd_line() -> int:

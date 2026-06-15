@@ -10,10 +10,10 @@ import pytest
 from src.oracle.Oracle import Oracle
 from src.sf.Salesforce import Salesforce
 
+from tests.conftest import ORACLE_ENVIRONMENTS, SALESFORCE_ENVIRONMENTS
+
 # (env_name, namespace) pairs to probe. HOME has no DB connection vars
 # (only ORACLE_HOME_PATH, a filesystem path), so it is not a connectable env.
-ORACLE_ENVIRONMENTS = ["QBL", "DWH", "HOMELAB"]
-SALESFORCE_ENVIRONMENTS = ["TRAIL"]
 
 
 @pytest.mark.parametrize("env", ORACLE_ENVIRONMENTS)

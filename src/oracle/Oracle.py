@@ -1,11 +1,28 @@
 # src/oracle/Oracle.py
 from __future__ import annotations
-import os
 import re
 import logging
-
 logger: logging.Logger = logging.getLogger(__name__)
 
+from typing import Any
+from itertools import islice
+from collections.abc import Iterator, Iterable
+import oracledb
+
+from src.models import DataSource, Schema, System, Records, Table, Column, PythonTypes
+from src.oracle.OracleClient import OracleClient
+from src.oracle.OracleTypeMap import to_oracle_table, oracle_to_python, normalize_cell, immutable_constraints #, python_to_oracle #, raw_type_to_oracledb_input_size
+from src.oracle.OracleModels import (
+    OracleColumn,
+    OracleTable,
+    to_oracle_snake,
+    SQL_TABLE_PKS,
+    SQL_TABLE_FKS,
+    SQL_TABLE_INDEXES,
+    SQL_TABLE_COLUMNS,
+    ORACLE_MAX_VARCHAR2_CHAR,
+    varchar2_growth_buffer,
+)
 
 def _normalize_ora_type(raw: str) -> str:
     """Canonicalize an Oracle catalog DATA_TYPE for drift comparison.
@@ -32,25 +49,17 @@ def _parse_value_too_large(message: str) -> tuple[str, int] | None:
         return None
     return m.group("col"), int(m.group("actual"))
 
-from typing import Any
-from itertools import islice
-from collections.abc import Iterator
-import oracledb
 
-from src.models import DataSource, Schema, System, Records, Table, Column, PythonTypes
-from src.oracle.OracleClient import OracleClient
-from src.oracle.OracleTypeMap import to_oracle_table, oracle_to_python, normalize_cell #, python_to_oracle #, raw_type_to_oracledb_input_size
-from src.oracle.OracleModels import (
-    OracleColumn,
-    OracleTable,
-    to_oracle_snake,
-    SQL_TABLE_PKS,
-    SQL_TABLE_FKS,
-    SQL_TABLE_INDEXES,
-    SQL_TABLE_COLUMNS,
-    ORACLE_MAX_VARCHAR2_CHAR,
-    varchar2_growth_buffer,
+# ORA-01400: cannot insert NULL into ("S"."T"."COL")
+_ORA_01400_RE: re.Pattern[str] = re.compile(
+    r'cannot insert NULL into\s*\((?:"[^"]+"\.)*"(?P<col>[^"]+)"\)'
 )
+
+
+def _parse_cannot_insert_null(message: str) -> str | None:
+    """Extract the oracle_column_name from an ORA-01400 message."""
+    m = _ORA_01400_RE.search(message or "")
+    return m.group("col") if m else None
 
 class Oracle(DataSource):
     client: OracleClient
@@ -203,6 +212,10 @@ class Oracle(DataSource):
         mutated_records = self.mutate_records(oracle_table, records)
         data = mutated_records.data
         
+        if action == 'reset':
+            self.client.execute(f"TRUNCATE TABLE {oracle_table.qualified_name} CASCADE")
+            self.client.commit()
+
         connection: oracledb.Connection = self.client.connect()
         cursor: oracledb.Cursor = connection.cursor()
         
@@ -210,7 +223,7 @@ class Oracle(DataSource):
             input_sizes: dict[str, Any] = oracle_table.column_input_sizes()
             if input_sizes:
                 cursor.setinputsizes(**input_sizes)
-                
+
             if action == "insert":
                 statement: str = oracle_table.insert_sql()
             elif action == "upsert":
@@ -218,7 +231,7 @@ class Oracle(DataSource):
             elif action == "update":
                 statement: str = oracle_table.update_sql()
             elif action == "reset":
-                self.client.execute(f"TRUNCATE TABLE {oracle_table.qualified_name} CASCADE")
+                # truncate handled above
                 statement: str = oracle_table.insert_sql()
             else:
                 raise RuntimeError(f"class Oracle, function: load_records, action: Unknown value entered: {action} ")
@@ -261,34 +274,61 @@ class Oracle(DataSource):
         batch error, or a required width beyond VARCHAR2 max, is fatal.
         """
         pending: list[dict[str, Any]] = chunk
-        # Bounded: every pass either widens at least one column or raises, and a
-        # column only grows, so progress is monotonic.
-        for _ in range(len(oracle_table.columns) + 2):
+        # Bounded: every pass either adapts at least one column (widen / promote
+        # to CLOB / relax NOT NULL) or raises. Each column adapts a finite number
+        # of times (grows once, promotes once, relaxes once), so progress is
+        # monotonic and the loop terminates.
+        max_passes = 2 * len(oracle_table.columns) + 3
+        for _ in range(max_passes):
             cursor.executemany(statement, pending, batcherrors=True)
             errors: list[Any] = cursor.getbatcherrors()
             if not errors:
                 return
 
             widen: dict[str, int] = {}
+            promote: set[str] = set()
+            relax_null: set[str] = set()
             retry_rows: list[dict[str, Any]] = []
+
             for err in errors:
-                parsed = _parse_value_too_large(getattr(err, "message", str(err)))
-                if getattr(err, "code", None) == 12899 and parsed is not None:
-                    col_name, actual = parsed
-                    widen[col_name] = max(widen.get(col_name, 0), actual)
+                code = getattr(err, "code", None)
+                message = getattr(err, "message", str(err))
+                too_large = _parse_value_too_large(message)
+                null_col = _parse_cannot_insert_null(message)
+
+                if code == 12899 and too_large is not None:
+                    col_name, actual = too_large
+                    if actual > ORACLE_MAX_VARCHAR2_CHAR:
+                        # Beyond VARCHAR2 capacity: the column must become a CLOB.
+                        promote.add(col_name)
+                    else:
+                        widen[col_name] = max(widen.get(col_name, 0), actual)
+                    retry_rows.append(pending[err.offset])
+                elif code == 1400 and null_col is not None:
+                    # Source claimed the field NOT NULL, but the data is null.
+                    relax_null.add(null_col)
                     retry_rows.append(pending[err.offset])
                 else:
-                    # Non-widenable error: surface every error in the batch.
+                    # Unrecognized error: surface every error in the batch.
                     raise RuntimeError(
                         "".join(f"\n{err}" for err in errors)
                     )
 
-            self._widen_columns(connection, cursor, oracle_table, widen)
+            # A column overflowing past VARCHAR2 wins over a plain widen.
+            for col_name in promote:
+                widen.pop(col_name, None)
+
+            if widen:
+                self._widen_columns(connection, cursor, oracle_table, widen)
+            if promote:
+                self._promote_columns_to_clob(connection, cursor, oracle_table, promote)
+            if relax_null:
+                self._relax_not_null(connection, cursor, oracle_table, relax_null)
             pending = retry_rows
 
         raise RuntimeError(
-            f"load_records: column widening for '{oracle_table.qualified_name}' "
-            f"did not converge after {len(oracle_table.columns) + 2} passes."
+            f"load_records: on-the-fly column adaptation for "
+            f"'{oracle_table.qualified_name}' did not converge after {max_passes} passes."
         )
 
     def _widen_columns(
@@ -335,6 +375,126 @@ class Oracle(DataSource):
         input_sizes = oracle_table.column_input_sizes()
         if input_sizes:
             cursor.setinputsizes(**input_sizes)
+
+    def _temp_column_name(self, oracle_table: OracleTable, base: str) -> str:
+        """A unique helper-column name for the CLOB clone (Oracle id <= 128 chars)."""
+        existing = {c.oracle_name.upper() for c in oracle_table.columns}
+        candidate = f"{base[:120]}_CLOB"
+        suffix = 0
+        while candidate.upper() in existing:
+            suffix += 1
+            candidate = f"{base[:116]}_CLOB{suffix}"
+        return candidate
+
+    def _promote_columns_to_clob(
+        self,
+        connection: oracledb.Connection,
+        cursor: oracledb.Cursor,
+        oracle_table: OracleTable,
+        col_names: Iterable[str],
+    ) -> None:
+        """Convert VARCHAR2 columns that overflow past the VARCHAR2 max to CLOB.
+
+        Oracle cannot ALTER a VARCHAR2 directly to CLOB (ORA-22858), so each
+        column is cloned in place: add a CLOB sibling, copy the existing values
+        across, drop the original (cascading its column-level constraints), and
+        rename the clone back to the original name. Already-applied rows are
+        committed first because the ALTER/DROP are DDL (implicit commit) and need
+        the row locks released.
+
+        Salesforce describe nullability is untrusted, so the promoted column is
+        left nullable rather than re-imposing a NOT NULL we can't honor.
+        """
+        connection.commit()
+        q = oracle_table.qualified_name
+        schema = str(oracle_table.namespace)
+        col_by_name: dict[str, OracleColumn] = {c.oracle_name: c for c in oracle_table.columns}
+
+        for name in col_names:
+            col = col_by_name.get(name)
+            if col is None:
+                raise RuntimeError(f"Cannot promote unknown column '{q}.{name}' to CLOB.")
+            if col.raw_type == "CLOB":
+                continue
+            if col.raw_type != "VARCHAR2":
+                raise RuntimeError(
+                    f"Refusing to promote '{q}.{name}' to CLOB: it is {col.raw_type}, not VARCHAR2."
+                )
+
+            # Determine the constraints on the column before we disturb it. We
+            # refuse to drop/cascade any immutable key constraint (primary,
+            # unique, foreign), so a CLOB conversion can never corrupt a key.
+            constraints = self.client.all_constraints(
+                schema=schema, table_name=oracle_table.name, column_name=name
+            )
+            blocking = immutable_constraints(constraints)
+            if blocking:
+                detail = ", ".join(
+                    f"{c.get('CONSTRAINT_NAME')} ({c.get('CONSTRAINT_TYPE_DESC')})"
+                    for c in blocking
+                )
+                raise RuntimeError(
+                    f"Cannot promote '{q}.{name}' to CLOB: it participates in immutable "
+                    f"constraint(s) that must not be dropped: {detail}."
+                )
+
+            tmp = self._temp_column_name(oracle_table, name)
+            logger.info(
+                "Promoting '%s.%s' VARCHAR2 -> CLOB to fit oversized source data "
+                "(dropping %d column constraint(s)).",
+                q, name, len(constraints),
+            )
+            self.client.execute(f"ALTER TABLE {q} ADD ({tmp} CLOB)")
+            self.client.execute(f"UPDATE {q} SET {tmp} = {name}")
+            self.client.commit()
+            # CASCADE CONSTRAINTS drops the column-level constraints we determined
+            # above (NOT NULL/check/unique/FK) along with the column itself.
+            self.client.execute(f"ALTER TABLE {q} DROP COLUMN {name} CASCADE CONSTRAINTS")
+            self.client.execute(f"ALTER TABLE {q} RENAME COLUMN {tmp} TO {name}")
+
+            col.raw_type = "CLOB"
+            col.max_length = None
+            col.char_length = None
+            col.is_nullable = True
+
+        # Refresh bind sizes so the promoted columns bind as CLOB.
+        input_sizes = oracle_table.column_input_sizes()
+        if input_sizes:
+            cursor.setinputsizes(**input_sizes)
+
+    def _relax_not_null(
+        self,
+        connection: oracledb.Connection,
+        cursor: oracledb.Cursor,
+        oracle_table: OracleTable,
+        col_names: Iterable[str],
+    ) -> None:
+        """Drop the NOT NULL constraint on columns the source falsely marked
+        non-nullable but that actually carry NULLs (ORA-01400).
+
+        Salesforce describe reports fields as non-nullable that, in the data, are
+        null; rather than abort the load we relax the column to NULL. DDL commits
+        the already-applied rows, so release locks first.
+        """
+        connection.commit()
+        q = oracle_table.qualified_name
+        schema = str(oracle_table.namespace)
+        col_by_name: dict[str, OracleColumn] = {c.oracle_name: c for c in oracle_table.columns}
+
+        for name in col_names:
+            constraints = self.client.all_constraints(
+                schema=schema, table_name=oracle_table.name, column_name=name
+            )
+            logger.info(
+                "Relaxing NOT NULL on '%s.%s': source metadata claimed non-nullable "
+                "but the data is null (constraints: %s).",
+                q, name, ", ".join(str(c.get("CONSTRAINT_NAME")) for c in constraints) or "none",
+            )
+            self.client.execute(f"ALTER TABLE {q} MODIFY ({name} NULL)")
+            col = col_by_name.get(name)
+            if col is not None:
+                col.is_nullable = True
+
     def mutate_records(self, table: OracleTable, records: Records | list[dict[str, Any]]) -> Records:
         if isinstance(records, Records):
             raw_data = records.data
@@ -375,7 +535,7 @@ class Oracle(DataSource):
             message='ok'
         )
 
-    def mutate_table(self, table: Table | OracleTable, source_system: System | None = None) -> Table:
+    def mutate_table(self, table: Table | OracleTable, source_system: System | None = None, **kwargs) -> Table:
         # Salesforce's describe nullability (and other constraint metadata) does
         # not reflect the real data, so constraints sourced from SF are recorded
         # but not enforced. Oracle->Oracle keeps hard enforcement.

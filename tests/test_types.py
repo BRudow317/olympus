@@ -25,12 +25,12 @@ from src.oracle.OracleTypeMap import (
     normalize_cell,
 )
 from src.oracle.OracleModels import OracleColumn, to_oracle_snake, ORACLE_RESERVED
-from src.seeding import resolve_cross_system_name, _build_rename_map
+from src.jobs.seeding import resolve_cross_system_name, _build_rename_map
 
 
-# --------------------------------------------------------------------------- #
+
 # Salesforce <-> Python
-# --------------------------------------------------------------------------- #
+
 class TestSalesforceTypeConsistency:
     def test_every_sf_type_maps_to_a_python_type(self) -> None:
         for sf_type in SF_TYPE_MAP:
@@ -106,9 +106,9 @@ class TestSalesforceTypeConsistency:
         assert out == {"Id": "001", "Age": 30, "Active": True, "Untyped": "x"}
 
 
-# --------------------------------------------------------------------------- #
+
 # Oracle <-> Python
-# --------------------------------------------------------------------------- #
+
 class TestOracleTypeConsistency:
     @pytest.mark.parametrize(
         "raw_type, scale, expected",
@@ -217,17 +217,22 @@ class TestNormalizeCell:
         assert normalize_cell("VARCHAR2", value, PythonTypes.boolean) == expected
 
 
-# --------------------------------------------------------------------------- #
+
 # Cross-system name / column resolution
-# --------------------------------------------------------------------------- #
+
 class TestOracleSnake:
     @pytest.mark.parametrize(
         "value, expected",
         [
-            ("LastName", "LAST_NAME"),
-            ("AccountId", "ACCOUNT_ID"),
+            # camelCase is NOT split into underscores anymore: it is only
+            # upper-cased. Existing underscores are preserved as-is.
+            ("LastName", "LASTNAME"),
+            ("AccountId", "ACCOUNTID"),
             ("Id", "ID"),
             ("already_snake", "ALREADY_SNAKE"),
+            ("LAST_NAME", "LAST_NAME"),
+            # Non-alphanumeric runs collapse to a single underscore, edges stripped.
+            ("InPRS_PensionIdentification__c", "INPRS_PENSIONIDENTIFICATION__C"),
         ],
     )
     def test_snake_cases(self, value, expected) -> None:
@@ -237,13 +242,18 @@ class TestOracleSnake:
         once = to_oracle_snake("LastName")
         assert to_oracle_snake(once) == once
 
-    def test_canonical_form_matches_across_conventions(self) -> None:
-        assert to_oracle_snake("LastName") == to_oracle_snake("LAST_NAME")
+    def test_camelcase_is_not_split(self) -> None:
+        # Deliberate design change: SF mixes camelCase and snake_case freely, so
+        # the canonical form no longer forces underscores at case boundaries.
+        # As a consequence, a camelCase name and its snake_case spelling are
+        # distinct canonical signatures.
+        assert to_oracle_snake("LastName") == "LASTNAME"
+        assert to_oracle_snake("LastName") != to_oracle_snake("LAST_NAME")
 
-    def test_reserved_word_is_suffixed(self) -> None:
+    def test_reserved_word_is_escaped(self) -> None:
         result = to_oracle_snake("Select")
         assert result not in ORACLE_RESERVED
-        assert result.startswith("SELECT")
+        assert "SELECT" in result
 
     def test_leading_digit_is_prefixed(self) -> None:
         result = to_oracle_snake("123abc")
@@ -251,8 +261,10 @@ class TestOracleSnake:
 
 
 class TestCrossSystemName:
-    def test_sf_to_oracle_prefixes_and_snakes(self) -> None:
-        assert resolve_cross_system_name("Contact", System.salesforce, System.oracle) == "SF_CONTACT"
+    def test_sf_to_oracle_prepends_sf(self) -> None:
+        # The prefix is added but the original case is preserved; Oracle folds
+        # the unquoted identifier to upper-case itself at DDL time.
+        assert resolve_cross_system_name("Contact", System.salesforce, System.oracle) == "SF_Contact"
 
     def test_oracle_to_sf_strips_sf_prefix_on_return(self) -> None:
         assert resolve_cross_system_name("SF_CONTACT", System.oracle, System.salesforce) == "CONTACT"
@@ -261,7 +273,7 @@ class TestCrossSystemName:
         assert resolve_cross_system_name("ACCOUNT", System.oracle, System.salesforce) == "ora_account__c"
 
     def test_sf_to_oracle_strips_ora_prefix_on_return(self) -> None:
-        assert resolve_cross_system_name("ora_account__c", System.salesforce, System.oracle) == "ACCOUNT"
+        assert resolve_cross_system_name("ora_account__c", System.salesforce, System.oracle) == "account"
 
     def test_same_system_is_unchanged(self) -> None:
         assert resolve_cross_system_name("Foo", System.oracle, System.oracle) == "Foo"
@@ -273,17 +285,21 @@ class TestCrossSystemName:
 
 
 class TestRenameMap:
+    # Columns correlate by their canonical to_oracle_snake() signature. Oracle
+    # target columns are derived from the SF source names through that same
+    # function, so a camelCase SF name and its upper-cased Oracle counterpart
+    # share a signature ("LastName" -> "LASTNAME" <- "LASTNAME").
     def test_sf_to_oracle_renames_keys(self) -> None:
         source = [Column(name="LastName"), Column(name="Id")]
-        target = [Column(name="LAST_NAME"), Column(name="ID")]
-        assert _build_rename_map(source, target) == {"LastName": "LAST_NAME", "Id": "ID"}
+        target = [Column(name="LASTNAME"), Column(name="ID")]
+        assert _build_rename_map(source, target) == {"LastName": "LASTNAME", "Id": "ID"}
 
     def test_oracle_to_sf_renames_keys(self) -> None:
-        source = [Column(name="LAST_NAME"), Column(name="ID")]
+        source = [Column(name="LASTNAME"), Column(name="ID")]
         target = [Column(name="LastName"), Column(name="Id")]
-        assert _build_rename_map(source, target) == {"LAST_NAME": "LastName", "ID": "Id"}
+        assert _build_rename_map(source, target) == {"LASTNAME": "LastName", "ID": "Id"}
 
     def test_unmatched_columns_are_omitted(self) -> None:
         source = [Column(name="LastName"), Column(name="Orphan")]
-        target = [Column(name="LAST_NAME")]
-        assert _build_rename_map(source, target) == {"LastName": "LAST_NAME"}
+        target = [Column(name="LASTNAME")]
+        assert _build_rename_map(source, target) == {"LastName": "LASTNAME"}

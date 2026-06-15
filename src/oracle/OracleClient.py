@@ -1,11 +1,22 @@
-"""OracleClient.py"""
+"""OracleClient.py
+Example Oracle .env configs:
+
+# Dev01
+AUTO_DEV01_USER=INPRS_AUTOMATION
+AUTO_DEV01_PASS=examplepassword
+AUTO_DEV01_HOST=devoraoel24.cloud.inprs.in.gov
+AUTO_DEV01_PORT=1536
+AUTO_DEV01_SID=ERMPASD1"""
+
 from __future__ import annotations
 
 import logging
 import os
-import oracledb
 from collections.abc import Iterator, Iterable, Callable
-from typing import Any, Literal
+from pathlib import Path
+from typing import Any
+
+import oracledb
 from oracledb import (
     LOB, Connection, Cursor, DataFrame, DbObjectType, DbType,
     Queue, AsyncQueue, DbObject, MessageProperties,
@@ -13,6 +24,9 @@ from oracledb import (
 
 logger: logging.Logger = logging.getLogger(__name__)
 
+# ==============================================================================
+# 1. CORE CLIENT REPRESENTATION AND SLOTS PROPERTY ENGINE
+# ==============================================================================
 class OracleClient:
     _oracle_user: str
     _oracle_pass: str
@@ -38,15 +52,16 @@ class OracleClient:
         oracle_port: int | str = 1521,
         oracle_service: str = '',
     ) -> None:
+        """Initializes raw parameter strings, enforces port scaling, and tracks connection states."""
         self._oracle_user = oracle_user
         self._oracle_pass = oracle_pass
         self._oracle_host = oracle_host
         self._oracle_port = int(oracle_port)
         self._oracle_service = oracle_service
         self._current_connection = None
-
+        
         if not self._oracle_pass:
-            raise RuntimeError(f"No Values detected:\n{self.__repr__()}")
+            raise RuntimeError(f"No Password detected:\n{self.__repr__()}")
 
     def __repr__(self) -> str:
         return (
@@ -61,6 +76,7 @@ class OracleClient:
         return self.connect()
 
     def __del__(self) -> None:
+        """Safely tears down active database instances on system cleanup boundaries."""
         try:
             self.close()
         except Exception as e:
@@ -70,24 +86,22 @@ class OracleClient:
 
     @classmethod
     def client_constructor(cls, environment: str) -> OracleClient:
+        """Constructs an instance using automated OS environment parameter lookups."""
         environment = environment.upper()
         
-        user: str | None = os.getenv(f"ORACLE_{environment}_USER") or os.getenv(f"ORACLE_{environment.lower()}_USER") or None
-        pwd: str | None = os.getenv(f"ORACLE_{environment}_PASS") or os.getenv(f"ORACLE_{environment.lower()}_PASS") or None
-        host: str | None = os.getenv(f"ORACLE_{environment}_HOST") or os.getenv(f"ORACLE_{environment.lower()}_HOST") or None
-        port: str | int = os.getenv(f"ORACLE_{environment}_PORT") or os.getenv(f"ORACLE_{environment.lower()}_PORT") or 1521
-        svc: str | None = os.getenv(f"ORACLE_{environment}_SERVICE") or os.getenv(f"ORACLE_{environment.lower()}_SERVICE") or os.getenv(f"ORACLE_{environment}_SID") or os.getenv(f"ORACLE_{environment.lower()}_SID") or None
-
-        if not all([user, pwd, host, svc]):
-            raise ValueError(f"Missing Oracle env vars for '{environment}'")
+        user: str | None = os.getenv(f"AUTO_{environment}_USER") or None
+        pwd: str | None = os.getenv( f"AUTO_{environment}_PASS") or None
+        host: str | None = os.getenv(f"AUTO_{environment}_HOST") or None
+        port: str | int = os.getenv( f"AUTO_{environment}_PORT") or 1521
+        svc: str | None = os.getenv( f"AUTO_{environment}_SERVICE") or os.getenv(f"AUTO_{environment}_SID") or None
 
         if (not user or not pwd or not host or not port or not svc):
-            raise ValueError(f"Missing Oracle env vars for '{environment}'")
-
-        # assert user == 'BRUDOW'
-        # assert svc in ('ODID1', 'DEV01')
-        # assert int(port) == 1564
-        # assert host == 'devoraoel26.cloud.inprs.in.gov'
+            raise ValueError(f"Missing Oracle env vars for '{environment}'\n"
+                             f"user: {user}\n"
+                             f"host: {host}\n"
+                             f"port: {port}\n"
+                             f"svc: {svc}"
+                             )
 
         return cls(
             oracle_user=user,
@@ -98,6 +112,7 @@ class OracleClient:
         )
 
     def _new_connect(self) -> None:
+        """Invokes the oracledb thick/thin connection factory and sets strict transaction bounds."""
         self._current_connection = oracledb.connect(
             user=self._oracle_user,
             password=self._oracle_pass,
@@ -109,6 +124,7 @@ class OracleClient:
         logger.debug("New Oracle Connection Established")
 
     def connect(self) -> oracledb.Connection:
+        """Evaluates pool health states dynamically, spawning fresh targets if drops are caught."""
         try:
             if self._current_connection is not None and self._current_connection.is_healthy():
                 return self._current_connection
@@ -120,7 +136,7 @@ class OracleClient:
                 return self._current_connection
         except Exception as e:
             logger.error("\n\n\n#########################################\n")
-            logger.error(f"!!!! Failed to Connect to Database: {self.__repr__}\nError: {e}\n\n")
+            logger.error(f"!!!! Failed to Connect to Database: {self.__repr__()}\nError: {e}\n\n")
             raise e
 
     def cursor(self, scrollable: bool = False) -> Cursor:
@@ -142,6 +158,7 @@ class OracleClient:
     def rollback(self) -> None:
         self.connect().rollback()
 
+
     def execute_many(
         self, 
         sql: str, 
@@ -151,6 +168,7 @@ class OracleClient:
         batcherrors: bool = True, 
         batch_size: int = 1000,
     ) -> list[Any]:
+        """Pushes structured datasets in chunks via execute_many, binding input properties."""
         all_errors: list[Any] = []
         batch: list[dict[str, Any]] = []
         
@@ -178,6 +196,7 @@ class OracleClient:
         return all_errors
 
     def json_factory(self, cursor: Cursor) -> Cursor:
+        """Injects custom rows mapping interceptors to automatically stream LOB values cleanly."""
         name_list = []
         lob_indexes = []
         
@@ -196,7 +215,8 @@ class OracleClient:
             
         cursor.rowfactory = process_row
         return cursor
-    
+
+
     def lazy_query(
         self,
         statement: str,
@@ -204,6 +224,7 @@ class OracleClient:
         array_size: int | None = None,
         batch_size: int = 10_000,
     ) -> Iterator[dict[str, Any]]:
+        """Generator lazily streaming table data blocks from JSON-factored cursor arrays."""
         binds_ = binds or {}
         cursor = self.cursor()
         try:
@@ -222,6 +243,7 @@ class OracleClient:
         array_size: int | None = None,
         batch_size: int = 10_000,
     ) -> list[dict[str, Any]]:
+        """Eagerly extracts complete query arrays straight into internal memory caches."""
         binds_ = binds or {}
         cursor = self.cursor()
         try:
@@ -297,186 +319,194 @@ class OracleClient:
             batch_size=batch_size,
         )
 
+
     def plus_query(self, sql: str) -> tuple[int, str | None, str | None]:
         import sys
         import subprocess
-        
         cmd = ["sqlplus", "-s", self.con_str]
         cmpl_prc = subprocess.run(
-            cmd, 
-            input=sql, 
-            capture_output=True, 
-            check=False, 
+            cmd,
+            input=sql,
+            capture_output=True,
+            check=False,
             text=True,
         )
         return (cmpl_prc.returncode, cmpl_prc.stdout, cmpl_prc.stderr)
 
+    def script_runner(self, path: str | Path):
+        sql_path = str(path)
+        with open(sql_path, 'r', encoding='utf-8') as file:
+            statement=file.read()
+            self.execute(statement)
+            self.commit()
+            logger.info(f"OracleClient.script_runner('{sql_path}') => Completed Successfully")
 
     def all_schemas(self) -> list[Any]:
         sql = """SELECT DISTINCT OWNER FROM ALL_TABLES"""
         return self.query(sql)
 
-
     def all_tables(self, schema: str) -> list[dict[str, str]]:
         sql = """
-            SELECT DISTINCT table_name 
-            FROM all_tables 
-            WHERE owner = :schema
+        SELECT DISTINCT table_name
+        FROM all_tables
+        WHERE upper(owner) = upper(:schema)
         """
-        binds = {"schema": schema.upper()}
+        binds = {"schema": schema}
         return self.query(sql, binds)
-
 
     def all_tab_columns(self, schema: str, table: str) -> list[dict[str, Any]]:
         sql = """
-            SELECT 
-                column_name, 
-                column_id, 
-                data_type, 
-                data_length, 
-                char_length, 
-                char_used, 
-                data_precision, 
-                data_scale, 
-                nullable, 
-                data_default, 
-                default_length
-            FROM all_tab_columns 
-            WHERE owner = :schema 
-            AND table_name = :table_name 
-            ORDER BY column_id
+        SELECT
+            column_name,
+            column_id,
+            data_type,
+            data_length,
+            char_length,
+            char_used,
+            data_precision,
+            data_scale,
+            nullable,
+            data_default,
+            default_length
+        FROM all_tab_columns
+        WHERE upper(owner) = upper(:schema)
+        AND upper(table_name) = upper(:table_name)
+        ORDER BY column_id
         """
         binds = {"schema": schema.upper(), "table_name": table.upper()}
         return self.query(sql, binds)
 
     def all_constraints(
-        self, 
-        schema: str = '*', 
-        table_name: str = '*', 
-        constraint_type: str = '*'
+        self,
+        schema: str = '',
+        table_name: str = '',
+        constraint_type: str = '*',
+        column_name: str | None = None
     ) -> list[dict[str, str]]:
         binds = {}
         sql = """
-            SELECT 
-                con.owner, 
-                con.table_name, 
-                col.column_name, 
-                con.constraint_name, 
-                con.constraint_type, 
-                CASE con.constraint_type 
-                    WHEN 'C' THEN 'CHECK / NOT NULL' 
-                    WHEN 'P' THEN 'PRIMARY KEY' 
-                    WHEN 'U' THEN 'UNIQUE' 
-                    WHEN 'R' THEN 'FOREIGN KEY' 
-                    WHEN 'V' THEN 'VIEW CHECK OPTION' 
-                    WHEN 'O' THEN 'VIEW READ ONLY' 
-                    WHEN 'F' THEN 'REF COLUMN' 
-                    WHEN 'H' THEN 'HASH EXPRESSION' 
-                    WHEN 'S' THEN 'SUPPLEMENTAL LOGGING' 
-                    ELSE 'UNKNOWN (' || con.constraint_type || ')' 
-                END AS constraint_type_desc, 
-                con.r_owner, 
-                ac_cols_ref.table_name AS r_table, 
-                ac_cols_ref.column_name AS r_column, 
-                con.r_constraint_name, 
-                con.delete_rule, 
-                con.status, 
-                con.deferrable, 
-                con.deferred, 
-                con.validated, 
-                con.generated, 
-                con.search_condition, 
-                con.search_condition_vc, 
-                con.bad, 
-                con.rely, 
-                con.last_change, 
-                con.index_owner, 
-                con.index_name, 
-                con.invalid, 
-                con.view_related, 
-                con.origin_con_id 
-            FROM all_constraints con 
-            JOIN all_cons_columns col 
-                ON con.constraint_name = col.constraint_name 
-                AND con.owner = col.owner 
-            LEFT JOIN all_cons_columns ac_cols_ref 
-                ON con.r_constraint_name = ac_cols_ref.constraint_name 
-                AND con.r_owner = ac_cols_ref.owner 
-                AND col.position = ac_cols_ref.position 
-            WHERE 1=1
-        """.strip()
-
-        if schema != '*':
-            sql += " AND con.owner = :schema"
-            binds["schema"] = schema.upper()
-
-        if table_name != '*':
-            sql += " AND con.table_name = :table_name"
-            binds["table_name"] = table_name.upper()
-
-        if constraint_type != '*':
-            sql += " AND con.constraint_type = :constraint_type"
-            binds["constraint_type"] = constraint_type.upper()
-
-        return self.query(sql, binds)
-
-    def get_composite_keys(self, schema: str, table_name: str) -> list[dict[str, Any]]:
-        sql = """
-            SELECT 
-                con.owner, 
-                con.table_name, 
-                con.constraint_name, 
-                con.constraint_type, 
-                -- Merges composite columns into a single string 
-                LISTAGG(col.column_name, ' ') WITHIN GROUP (ORDER BY col.position) AS column_names, 
-                -- Identifies if it is composite right in the dataset 
-                CASE 
-                    WHEN COUNT(col.column_name) OVER(PARTITION BY con.owner, con.constraint_name) > 1 THEN 'YES' 
-                    ELSE 'NO' 
-                END AS is_composite, 
-                con.r_owner, 
-                con.r_constraint_name 
-            FROM all_constraints con 
-            JOIN all_cons_columns col 
-                ON con.constraint_name = col.constraint_name 
-                AND con.owner = col.owner 
-            WHERE con.owner = :schema 
-                AND con.table_name = :table_name 
-            GROUP BY 
-                con.owner, 
-                con.table_name, 
-                con.constraint_name, 
-                con.constraint_type, 
-                con.r_owner, 
-                con.r_constraint_name
+        SELECT
+            con.owner,
+            con.table_name,
+            col.column_name,
+            con.constraint_name,
+            con.constraint_type,
+            CASE con.constraint_type
+                WHEN 'C' THEN 'CHECK / NOT NULL'
+                WHEN 'P' THEN 'PRIMARY KEY'
+                WHEN 'U' THEN 'UNIQUE'
+                WHEN 'R' THEN 'FOREIGN KEY'
+                WHEN 'V' THEN 'VIEW CHECK OPTION'
+                WHEN 'O' THEN 'VIEW READ ONLY'
+                WHEN 'F' THEN 'REF COLUMN'
+                WHEN 'H' THEN 'HASH EXPRESSION'
+                WHEN 'S' THEN 'SUPPLEMENTAL LOGGING'
+                ELSE 'UNKNOWN (' || con.constraint_type || ')'
+            END AS constraint_type_desc,
+            con.r_owner,
+            ac_cols_ref.table_name AS r_table,
+            ac_cols_ref.column_name AS r_column,
+            con.r_constraint_name,
+            con.delete_rule,
+            con.status,
+            con.deferrable,
+            con.deferred,
+            con.validated,
+            con.generated,
+            con.search_condition,
+            con.search_condition_vc,
+            con.bad,
+            con.rely,
+            con.last_change,
+            con.index_owner,
+            con.index_name,
+            con.invalid,
+            con.view_related,
+            con.origin_con_id
+        FROM all_constraints con
+        JOIN all_cons_columns col
+            ON con.constraint_name = col.constraint_name
+            AND con.owner = col.owner
+        LEFT JOIN all_cons_columns ac_cols_ref
+            ON con.r_constraint_name = ac_cols_ref.constraint_name
+            AND con.r_owner = ac_cols_ref.owner
+            AND col.position = ac_cols_ref.position
+        WHERE 1=1
         """.strip()
         
+        if schema != '*':
+            sql += " AND upper(con.owner) = upper(:schema)"
+            binds["schema"] = schema.upper()
+        if table_name != '*':
+            sql += " AND upper(con.table_name) = upper(:table_name)"
+            binds["table_name"] = table_name.upper()
+        if constraint_type != '*':
+            sql += " AND upper(con.constraint_type) = upper(:constraint_type)"
+            binds["constraint_type"] = constraint_type.upper()
+        if column_name:
+            sql += " AND upper(col.column_name) = upper(:column_name)"
+            binds["column_name"] = column_name
+            
+        return self.query(sql, binds)
+
+
+    def get_composite_keys(self, schema: str, table_name: str) -> list[dict[str, Any]]:
+        """Aggregates multikey composite relationships into unified catalog strings using LISTAGG."""
+        sql = """
+        SELECT
+            con.owner,
+            con.table_name,
+            con.constraint_name,
+            con.constraint_type,
+            -- Merges composite columns into a single string
+            LISTAGG(col.column_name, ' ') WITHIN GROUP (ORDER BY col.position) AS column_names,
+            -- Identifies if it is composite right in the dataset
+            CASE
+                WHEN COUNT(col.column_name) OVER(PARTITION BY con.owner, con.constraint_name) > 1 THEN 'YES'
+                ELSE 'NO'
+            END AS is_composite,
+            con.r_owner,
+            con.r_constraint_name
+        FROM all_constraints con
+        JOIN all_cons_columns col
+            ON con.constraint_name = col.constraint_name
+            AND con.owner = col.owner
+        WHERE upper(con.owner) = upper(:schema)
+        AND upper(con.table_name) = upper(:table_name)
+        GROUP BY
+            con.owner,
+            con.table_name,
+            con.constraint_name,
+            con.constraint_type,
+            con.r_owner,
+            con.r_constraint_name
+        """.strip()
         binds = {"schema": schema.upper(), "table_name": table_name.upper()}
         return self.query(sql, binds)
 
+
     def check_object_exists(
-        self, 
-        object_name: str, 
-        schema: str | None = None, 
+        self,
+        object_name: str,
+        schema: str | None = None,
         object_type: str | None = None
     ) -> bool:
+        """Verifies physical representation flags of tables or views inside the active catalog maps."""
         sql = """
-            SELECT count(object_name) AS "count" 
-            FROM all_objects 
-            WHERE 1=1 AND object_name = :object_name 
+        SELECT count(object_name) AS "count"
+        FROM all_objects
+        WHERE 1=1 AND upper(object_name) = upper(:object_name)
         """
-        
         binds = {}
         binds['object_name'] = object_name
         group = " GROUP BY object_name"
         
         if schema:
-            sql += " AND owner = :schema"
+            sql += " AND upper(owner) = upper(:schema)"
             binds['schema'] = schema
             group += ", owner"
-            
         if object_type:
-            sql += " AND object_type = :object_type"
+            sql += " AND upper(object_type) = upper(:object_type)"
             binds['object_type'] = object_type
             group += ", object_type"
             
@@ -486,12 +516,9 @@ class OracleClient:
         if len(result) > 0:
             if result[0].get('count', 0) > 0:
                 return True
-                
         return False
-    
 
-    # region Misc Methods 
-    
+    # region Misc Methods
     def cancel(self) -> None:
         self.connect().cancel()
 
@@ -511,22 +538,22 @@ class OracleClient:
         return self.connect().createlob(lob_type, data)
 
     def msgproperties(
-        self, 
-        payload: bytes | str | DbObject | None = None, 
-        correlation: str | None = None, 
-        delay: int | None = None, 
-        exceptionq: str | None = None, 
-        expiration: int | None = None, 
-        priority: int | None = None, 
+        self,
+        payload: bytes | str | DbObject | None = None,
+        correlation: str | None = None,
+        delay: int | None = None,
+        exceptionq: str | None = None,
+        expiration: int | None = None,
+        priority: int | None = None,
         recipients: list | None = None,
     ) -> MessageProperties:
         return self.connect().msgproperties(
-            payload, 
-            correlation, 
-            delay, 
-            exceptionq, 
-            expiration, 
-            priority, 
+            payload,
+            correlation,
+            delay,
+            exceptionq,
+            expiration,
+            priority,
             recipients,
         )
 
@@ -537,42 +564,40 @@ class OracleClient:
         raise TypeError(f"Expected Queue object from connection.queue(), got {type(q)}")
 
     def subscribe(
-        self, 
-        namespace: int = oracledb.SUBSCR_NAMESPACE_DBCHANGE, 
-        protocol: int = oracledb.SUBSCR_PROTO_CALLBACK, 
-        callback: Callable | None = None, 
-        timeout: int = 0, 
-        operations: int = oracledb.OPCODE_ALLOPS, 
-        port: int = 0, 
-        qos: int = oracledb.SUBSCR_QOS_DEFAULT, 
-        ip_address: str | None = None, 
-        grouping_class: int = oracledb.SUBSCR_GROUPING_CLASS_NONE, 
-        grouping_value: int = 0, 
-        grouping_type: int = oracledb.SUBSCR_GROUPING_TYPE_SUMMARY, 
-        name: str | None = None, 
+        self,
+        namespace: int = oracledb.SUBSCR_NAMESPACE_DBCHANGE,
+        protocol: int = oracledb.SUBSCR_PROTO_CALLBACK,
+        callback: Callable | None = None,
+        timeout: int = 0,
+        operations: int = oracledb.OPCODE_ALLOPS,
+        port: int = 0,
+        qos: int = oracledb.SUBSCR_QOS_DEFAULT,
+        ip_address: str | None = None,
+        grouping_class: int = oracledb.SUBSCR_GROUPING_CLASS_NONE,
+        grouping_value: int = 0,
+        grouping_type: int = oracledb.SUBSCR_GROUPING_TYPE_SUMMARY,
+        name: str | None = None,
         client_initiated: bool = False,
     ) -> oracledb.Subscription:
+        """Establishes an active server notification instance callback rule mapping."""
         return self.connect().subscribe(
-            namespace, 
-            protocol, 
-            callback, 
-            timeout, 
-            operations, 
-            port, 
-            qos, 
-            ip_address, 
-            grouping_class, 
-            grouping_value, 
-            grouping_type, 
-            name, 
+            namespace,
+            protocol,
+            callback,
+            timeout,
+            operations,
+            port,
+            qos,
+            ip_address,
+            grouping_class,
+            grouping_value,
+            grouping_type,
+            name,
             client_initiated,
         )
-        
     # endregion
 
-
     # region Properties
-
     @property
     def current_schema(self) -> str | None:
         return self.connect().current_schema or self.connect().username
@@ -700,5 +725,4 @@ class OracleClient:
     @call_timeout.setter
     def call_timeout(self, value: int) -> None:
         self.connect().call_timeout = value
-
     # endregion

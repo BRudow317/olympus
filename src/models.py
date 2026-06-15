@@ -6,6 +6,10 @@ from typing import Any, Protocol, runtime_checkable, Generic, TypeVar
 from collections.abc import Iterator
 from enum import StrEnum
 
+# ==============================================================================
+# 1. CORE ARCHITECTURAL ENUMERATIONS
+# ==============================================================================
+
 class System(StrEnum):
     oracle = 'oracle'
     salesforce = 'salesforce'
@@ -26,8 +30,18 @@ class PythonTypes(StrEnum):
     bytearray = "bytearray"
     json = "json"         # dict or list
 
+
+# ==============================================================================
+# 2. GENERICS BOUNDS DEFINITIONS
+# ==============================================================================
+
 C = TypeVar("C", bound="Column")
 TABLE = TypeVar("TABLE", bound="Table")
+
+
+# ==============================================================================
+# 3. METADATA DATA REPRESENTATION LAYER
+# ==============================================================================
 
 @dataclass(kw_only=True)
 class Column:
@@ -86,12 +100,22 @@ class Schema:
     system: System | None = None
     tables: list[Table] = field(default_factory=list)
 
+
+# ==============================================================================
+# 4. STREAM RECORD ENCAPSULATION
+# ==============================================================================
+
 @dataclass
 class Records:
     data: Iterator[dict[str, Any]] = field(default_factory=lambda: iter([]))
     columns: list[Column] = field(default_factory=lambda: [])
     code: int = 200
     message: str = 'ok'
+
+
+# ==============================================================================
+# 5. CORE SYSTEM DRIVER STRATEGY CONTRACT
+# ==============================================================================
 
 @runtime_checkable
 class DataSource(Protocol):
@@ -100,7 +124,7 @@ class DataSource(Protocol):
     def is_healthy(self) -> bool: ...
     def describe_schema(self, namespace: str | None = None) -> Schema: ...
     def describe_table(self, table: Table[Any]) -> Table: ...
-    def mutate_table(self, table: Table[Any], source_system: System | None = None) -> Table: ...
+    def mutate_table(self, table: Table[Any], source_system: System | None = None, **kwargs) -> Table: ...
     def query(self, statement: str, **kwargs) -> Records: ...
     def get_records(self, table: Table, **kwargs) -> Records: ...
     def load_records(self, action: str, table: Table, records: Records, **kwargs) -> None: ...

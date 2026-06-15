@@ -1,6 +1,6 @@
 """SfBulk2Engine.py
-https://developer.salesforce.com/docs/apis
-https://developer.salesforce.com/docs/atlas.en-us.api_asynch.meta/api_asynch/bulk_api_2_0.htm
+https://salesforce.com
+https://salesforce.com
 """
 from __future__ import annotations
 import logging
@@ -14,17 +14,24 @@ import math
 from collections.abc import Iterator
 from enum import StrEnum
 from typing import Any, TYPE_CHECKING, TypedDict, AnyStr
-from src.sf.SfModels import (
-    HttpMethod, 
-    HttpMethod as http,
-)
+
+# HttpMethod is needed at runtime (http.post/get/... below), not just for typing.
+from src.sf.SfClient import HttpMethod as http
 
 if TYPE_CHECKING:
     from src.sf.SfClient import SfClient
 
+# ==============================================================================
+# 1. BULK API LIMITATION CONSTANTS
+# ==============================================================================
 MAX_INGEST_JOB_FILE_SIZE = 150 * 1024 * 1024   # 150 MB per job
 MAX_INGEST_JOB_PARALLELISM = 15
 DEFAULT_QUERY_PAGE_SIZE = 50_000
+
+
+# ==============================================================================
+# 2. ENUMERATION DESCRIPTIONS
+# ==============================================================================
 class Operation(StrEnum):
     insert = "insert"
     upsert = "upsert"
@@ -59,7 +66,10 @@ class ResultsType(StrEnum):
     successful = "successfulResults"
     unprocessed = "unprocessedRecords"
 
-# --- Bulk API 2.0 Types ---
+
+# ==============================================================================
+# 3. BULK API 2.0 TYPE DICTIONARIES
+# ==============================================================================
 class QueryParameters(TypedDict, total=False):
     maxRecords: int
     locator: str
@@ -76,23 +86,31 @@ class QueryBytesResult(TypedDict):
     number_of_records: int
     data: bytes
 
+
+# ==============================================================================
+# 4. BULK 2 ORCHESTRATION CLIENT
+# ==============================================================================
 class Bulk2:
     _http: SfClient
     bulk2_url: str
 
     def __init__(self, http_client: SfClient) -> None:
+        """Mounts connection context references and binds bulk tracking paths."""
         self._http = http_client
-        self.bulk2_url = f"{self._http.services_url}/jobs/"
+        self.bulk2_url = self._http.bulk2_url
 
     def __getattr__(self, name: str) -> Bulk2SObject:
+        """Dynamic lookup mapping targeting contextual Bulk2 SObject managers."""
         if name.startswith("__"):
             return super().__getattribute__(name)
         return Bulk2SObject(object_name=name, bulk2_url=self.bulk2_url, http_client=self._http)
 
     def query(self, soql: str, **kwargs: Any) -> Iterator[bytes]:
+        """Pipes bulk selection data via an encapsulated dynamic object dispatcher query."""
         yield from Bulk2SObject("_query", self.bulk2_url, self._http).query(soql, **kwargs)
 
     def query_all(self, soql: str, **kwargs: Any) -> Iterator[bytes]:
+        """Pipes all data streams including soft-deleted items using queryAll actions."""
         yield from Bulk2SObject("_query", self.bulk2_url, self._http).query_all(soql, **kwargs)
 
 class Bulk2SObject:
@@ -354,7 +372,7 @@ class _Bulk2Client:
         }
 
     def _url(self, job_id: str | None, is_query: bool) -> str:
-        base = self.bulk2_url + ("query" if is_query else "ingest")
+        base = self.bulk2_url + ("/query" if is_query else "/ingest")
         return f"{base}/{job_id}" if job_id else base
 
     def create_job(

@@ -45,44 +45,90 @@ ORACLE_RESERVED: frozenset[str] = frozenset({
     "CASE",
 })
 
+
 def to_oracle_snake(
     value: str, 
     max_len: int = 128, 
     reserved: Iterable[str] = ORACLE_RESERVED, 
-    forced_prefix: str | None = None, 
-    optional_suffix: str = 'COL',
+    force_prefix: bool = False,
+    force_suffix: bool = False,
+    prefix_value: str = 'SF',
+    suffix_value: str = 'COL',
 ) -> str:
-    s: str = str(value).strip()
-    if not s:
-        return optional_suffix
-        
-    s: str = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', s)
-    s: str = re.sub(r'([A-Za-z])([0-9])', r'\1_\2', s)
-    s: str = re.sub(r'([0-9])([A-Za-z])', r'\1_\2', s)
-    s: str = re.sub(r'[^A-Za-z0-9_]+', '_', s)
-    # s: str = re.sub(r'_+', '_', s)
-    s: str = s.strip('_').upper()
+    # 1. Clean input and convert all non-alphanumeric/non-underscore chars to underscores
+    s: str = str(value).strip()        
+    s = re.sub(r'[^A-Za-z0-9_]+', '_', s)
+    s = s.strip('_').upper()
     
+    # 2. Reject empty strings after cleaning
     if not s:
-        return optional_suffix
+        raise ValueError(f"ValueError: to_oracle_snake(value='{value}'")
         
+    # 3. Oracle identifiers cannot start with a number. Prefix them accordingly.
     if s[0].isdigit():
-        s: str = f'{forced_prefix}_{s}' if forced_prefix else f'C_{s}'
-        
-    if s in reserved:
-        s: str = f'{forced_prefix}_{s}' if forced_prefix else f'{s}_{optional_suffix}'
-        
-    if len(s) > max_len:
-        prefix: str = forced_prefix or ''
-        if forced_prefix and s.startswith(prefix):
-            s: str = f'{s[len(prefix):max_len].rstrip("_")}'
-        elif s.endswith(f'_{optional_suffix}'):
-            base: str = s[:max_len - len(optional_suffix) - 1].rstrip('_')
-            s: str = f'{base}_{optional_suffix}'
+        if force_prefix:
+            prefix_value=prefix_value.rstrip("_")
+            s = f'{prefix_value}_{s}'
         else:
-            s: str = s[:max_len].rstrip('_')
+            s = f'C_{s}'
+        
+    # 4. Handle collision protection for Oracle reserved keyword conflicts
+    if s in reserved:
+        if force_prefix:
+            prefix_value=prefix_value.rstrip("_")
+            s = f'{prefix_value}_{s}'
+        elif force_suffix:
+            s = f'{s}_{suffix_value}'
+        else:
+            s = f'{prefix_value}_{s}'
+        
+    # 5. Enforce strict character length rules by truncation at the max length boundary
+    if len(s) > max_len:
+        s = s[:max_len].rstrip('_')
             
-    return s if s else optional_suffix
+    # 6. Safety fallback check to prevent returning empty values if edge case truncation wipes the string
+    return s if s else f"{prefix_value}_{suffix_value}"
+
+
+
+# def to_oracle_snake(
+#     value: str, 
+#     max_len: int = 128, 
+#     reserved: Iterable[str] = ORACLE_RESERVED, 
+#     forced_prefix: str | None = None, 
+#     optional_suffix: str = 'COL',
+# ) -> str:
+#     s: str = str(value).strip()
+#     if not s:
+#         return optional_suffix
+        
+#     s: str = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', s)
+#     s: str = re.sub(r'([A-Za-z])([0-9])', r'\1_\2', s)
+#     s: str = re.sub(r'([0-9])([A-Za-z])', r'\1_\2', s)
+#     s: str = re.sub(r'[^A-Za-z0-9_]+', '_', s)
+#     # s: str = re.sub(r'_+', '_', s)
+#     s: str = s.strip('_').upper()
+    
+#     if not s:
+#         return optional_suffix
+        
+#     if s[0].isdigit():
+#         s: str = f'{forced_prefix}_{s}' if forced_prefix else f'C_{s}'
+        
+#     if s in reserved:
+#         s: str = f'{forced_prefix}_{s}' if forced_prefix else f'{s}_{optional_suffix}'
+        
+#     if len(s) > max_len:
+#         prefix: str = forced_prefix or ''
+#         if forced_prefix and s.startswith(prefix):
+#             s: str = f'{s[len(prefix):max_len].rstrip("_")}'
+#         elif s.endswith(f'_{optional_suffix}'):
+#             base: str = s[:max_len - len(optional_suffix) - 1].rstrip('_')
+#             s: str = f'{base}_{optional_suffix}'
+#         else:
+#             s: str = s[:max_len].rstrip('_')
+            
+#     return s if s else optional_suffix
 
 @dataclass(kw_only=True)
 class OracleColumn(Column):
