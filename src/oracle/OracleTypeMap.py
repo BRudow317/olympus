@@ -5,8 +5,6 @@ from datetime import datetime, time, date
 from decimal import Decimal, InvalidOperation
 from dataclasses import asdict
 
-import oracledb
-
 from src.models import Column, PythonTypes, Table
 from src.oracle.OracleModels import ( 
     OracleTable, 
@@ -156,10 +154,6 @@ def oracle_bool_to_python(value: str | int | None = None) -> bool | None:
     if value is None:
         return None
     return str(value).strip().upper() == "Y"
-
-from datetime import datetime, time, date
-from decimal import Decimal, InvalidOperation
-from typing import Any
 
 def python_bool_to_oracle(value: Any) -> str | None:
     if value is None:

@@ -24,9 +24,7 @@ from oracledb import (
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-# ==============================================================================
-# 1. CORE CLIENT REPRESENTATION AND SLOTS PROPERTY ENGINE
-# ==============================================================================
+
 class OracleClient:
     _oracle_user: str
     _oracle_pass: str

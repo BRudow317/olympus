@@ -1,0 +1,1 @@
+CREATE SEQUENCE global_mq_id_sequence START WITH 1 INCREMENT BY 1;

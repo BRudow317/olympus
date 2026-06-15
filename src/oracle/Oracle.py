@@ -504,8 +504,6 @@ class Oracle(DataSource):
             raw_data = iter(records)
             cols = []
             
-        # Key by the canonical Oracle column name so source keys in any casing
-        # convention (SF 'LastName', Oracle 'LAST_NAME') resolve correctly.
         schema_map = {col.oracle_name: col for col in table.columns}
 
         def cleaning_generator() -> Iterator[dict[str, Any]]:
@@ -539,7 +537,7 @@ class Oracle(DataSource):
     def mutate_table(self, table: Table | OracleTable, source_system: System | None = None, **kwargs) -> Table:
         # Salesforce's describe nullability (and other constraint metadata) does
         # not reflect the real data, so constraints sourced from SF are recorded
-        # but not enforced. Oracle->Oracle keeps hard enforcement.
+        # but not enforced. Oracle -> Oracle keeps hard enforcement.
         enforce_constraints: bool = (
             source_system is None or System(source_system) != System.salesforce
         )
