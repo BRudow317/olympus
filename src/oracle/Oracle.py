@@ -542,7 +542,7 @@ class Oracle(DataSource):
             source_system is None or System(source_system) != System.salesforce
         )
 
-        # 1. Cast the incoming table
+        # Cast the incoming table
         ora_table: OracleTable = to_oracle_table(table, enforce_constraints=enforce_constraints)
         ora_table.namespace = self.schema(table.namespace)
 

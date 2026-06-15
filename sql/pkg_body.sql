@@ -558,15 +558,12 @@ create or replace package body qbl.mq_pkg as
        where mq_id = v_id;
       commit;
 
-      if v_status in ( 200, 304 ) then
-         response := 0;
-      else
-         response := 1;
-         raise_application_error(
-            -20001,
-            'Processing failed for MQ_ID=' || v_id || ' with status=' || v_status
-         );
-      end if;
+      -- 200 ingested, 304 unchanged, 404 pid not in source (rejected, but the
+      -- row stays staged in mq_inbound for the audit trail). All three are
+      -- acceptable outcomes -> 0. MuleSoft fans out every member; a not-found
+      -- pid is an expected rejection, not a failure. A genuine processing
+      -- error surfaces as an exception below, never as a status value.
+      response := 0;
    exception
       when others then
          rollback;

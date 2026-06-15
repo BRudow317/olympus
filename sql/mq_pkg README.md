@@ -28,7 +28,7 @@ end;
 /
 ```
 
-Happy path: `response = 0` and the inbound row finishes in status `200` (updated) or `304` (no change). Failure path: `response = 1` and the procedure raises an exception.
+Happy path: `response = 0` and the inbound row finishes in status `200` (updated), `304` (no change), or `404` (pid not found in `qbl.mq_vw`). MuleSoft fans out every member and we decide what to keep, so a `404` is an expected rejection, not a failure -- the row stays staged in `mq_inbound` at `404` but is not ingested into the source tables. Failure path: `response = 1` and the procedure raises an exception (the staged row is rolled back).
 
 ## Bulk Load
 
