@@ -329,7 +329,12 @@ create or replace package body qbl.mq_pkg as
             'created_at' value mqi_record.created_at,
             'created_by' value mqi_record.created_by
          returning clob);
-      return json_serialize(o_json pretty);
+      -- JSON_SERIALIZE cannot be called from a PL/SQL expression on 19c
+      -- (PL/SQL support was added in 21c); evaluate it in SQL instead.
+      select json_serialize(o_json returning clob pretty)
+        into o_json
+        from dual;
+      return o_json;
    exception
       when others then
          mq_logger(
