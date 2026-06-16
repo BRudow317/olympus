@@ -130,9 +130,7 @@ create or replace package body qbl.mq_pkg as
              csm_phn = i_phn,
              csm_email = i_email,
              csm_marital_st = i_marital_st,
-             csm_mbr_gender = i_mbr_gender,
-             updated_at = systimestamp,
-             updated_by = g_package_user
+             csm_mbr_gender = i_mbr_gender
        where csm_pen_id = i_pen_id;
    exception
       when others then
@@ -160,37 +158,41 @@ create or replace package body qbl.mq_pkg as
       mqi_record in out qbl.mq_inbound%rowtype
    ) return qbl.mq_inbound%rowtype as
    begin
-      mqi_record.mq_demogr_hash := rawtohex(standard_hash(
-         nvl(mqi_record.first_name, chr(124))
-         || nvl(mqi_record.middle_name, chr(124))
-         || nvl(mqi_record.last_name, chr(124))
-         || nvl(to_char(mqi_record.name_suffix_id), chr(124))
-         || nvl(to_char(mqi_record.birthdate, 'YYYY-MM-DD'), chr(124))
-         || nvl(to_char(mqi_record.dt_of_death, 'YYYY-MM-DD'), chr(124))
-         || nvl(mqi_record.email_addr, chr(124))
-         || nvl(to_char(mqi_record.gender_id), chr(124))
-         || nvl(to_char(mqi_record.mar_status_id), chr(124)),
-         'MD5'
-      ));
-
-      mqi_record.mq_address_hash := rawtohex(standard_hash(
-         nvl(mqi_record.address1, chr(124))
-         || nvl(mqi_record.address2, chr(124))
-         || nvl(mqi_record.address3, chr(124))
-         || nvl(mqi_record.address4, chr(124))
-         || nvl(mqi_record.city, chr(124))
-         || nvl(mqi_record.county, chr(124))
-         || nvl(mqi_record.state, chr(124))
-         || nvl(mqi_record.postal, chr(124))
-         || nvl(mqi_record.country, chr(124)),
-         'MD5'
-      ));
-
-      mqi_record.mq_phone_hash := rawtohex(standard_hash(
-         nvl(mqi_record.phone, chr(124))
-         || nvl(to_char(mqi_record.phone_type_id), chr(0)),
-         'MD5'
-      ));
+      -- STANDARD_HASH is a SQL-only function on 19c (no PL/SQL expression
+      -- support until 21c); compute all three hashes in a single SQL call.
+      select rawtohex(standard_hash(
+                nvl(mqi_record.first_name, chr(124))
+                || nvl(mqi_record.middle_name, chr(124))
+                || nvl(mqi_record.last_name, chr(124))
+                || nvl(to_char(mqi_record.name_suffix_id), chr(124))
+                || nvl(to_char(mqi_record.birthdate, 'YYYY-MM-DD'), chr(124))
+                || nvl(to_char(mqi_record.dt_of_death, 'YYYY-MM-DD'), chr(124))
+                || nvl(mqi_record.email_addr, chr(124))
+                || nvl(to_char(mqi_record.gender_id), chr(124))
+                || nvl(to_char(mqi_record.mar_status_id), chr(124)),
+                'MD5'
+             )),
+             rawtohex(standard_hash(
+                nvl(mqi_record.address1, chr(124))
+                || nvl(mqi_record.address2, chr(124))
+                || nvl(mqi_record.address3, chr(124))
+                || nvl(mqi_record.address4, chr(124))
+                || nvl(mqi_record.city, chr(124))
+                || nvl(mqi_record.county, chr(124))
+                || nvl(mqi_record.state, chr(124))
+                || nvl(mqi_record.postal, chr(124))
+                || nvl(mqi_record.country, chr(124)),
+                'MD5'
+             )),
+             rawtohex(standard_hash(
+                nvl(mqi_record.phone, chr(124))
+                || nvl(to_char(mqi_record.phone_type_id), chr(0)),
+                'MD5'
+             ))
+        into mqi_record.mq_demogr_hash,
+             mqi_record.mq_address_hash,
+             mqi_record.mq_phone_hash
+        from dual;
 
       return mqi_record;
    end hydrate_mq_hash;
@@ -289,49 +291,49 @@ create or replace package body qbl.mq_pkg as
       v_procedure_description varchar2(200) := 'A Function that accepts a MQ_INBOUND record and serializes it to JSON format returned as a clob.';
       o_json                  clob;
    begin
-      o_json :=
-         json_object(
-            'mq_id' value mqi_record.mq_id,
-            'csm_mbr_demogr_id' value mqi_record.csm_mbr_demogr_id,
-            'pid' value mqi_record.pid,
-            /* DEMO */
-            'first_name' value mqi_record.first_name,
-            'middle_name' value mqi_record.middle_name,
-            'last_name' value mqi_record.last_name,
-            'name_suffix_id' value mqi_record.name_suffix_id,
-            'birthdate' value mqi_record.birthdate,
-            'dt_of_death' value mqi_record.dt_of_death,
-            'email_addr' value mqi_record.email_addr,
-            'gender_id' value mqi_record.gender_id,
-            'mar_status_id' value mqi_record.mar_status_id,
-            'mq_demogr_hash' value mqi_record.mq_demogr_hash,
-            /* PHONE */
-            'csm_mbr_phn_id' value mqi_record.csm_mbr_phn_id,
-            'phone' value mqi_record.phone,
-            'phone_type_id' value mqi_record.phone_type_id,
-            'mq_phone_hash' value mqi_record.mq_phone_hash,
-            /* ADDRESS */
-            'csm_mbr_addr_id' value mqi_record.csm_mbr_addr_id,
-            'address1' value mqi_record.address1,
-            'address2' value mqi_record.address2,
-            'address3' value mqi_record.address3,
-            'address4' value mqi_record.address4,
-            'city' value mqi_record.city,
-            'county' value mqi_record.county,
-            'state' value mqi_record.state,
-            'postal' value mqi_record.postal,
-            'country' value mqi_record.country,
-            'mq_address_hash' value mqi_record.mq_address_hash,
-            'mq_status' value mqi_record.mq_status,
-            /* AUDIT */
-            'updated_at' value mqi_record.updated_at,
-            'updated_by' value mqi_record.updated_by,
-            'created_at' value mqi_record.created_at,
-            'created_by' value mqi_record.created_by
-         returning clob);
-      -- JSON_SERIALIZE cannot be called from a PL/SQL expression on 19c
-      -- (PL/SQL support was added in 21c); evaluate it in SQL instead.
-      select json_serialize(o_json returning clob pretty)
+      -- JSON_OBJECT and JSON_SERIALIZE are SQL-only on 19c (PL/SQL expression
+      -- support arrived in 21c); build and serialize the document in one SQL call.
+      select json_serialize(
+                json_object(
+                   'mq_id' value mqi_record.mq_id,
+                   'csm_mbr_demogr_id' value mqi_record.csm_mbr_demogr_id,
+                   'pid' value mqi_record.pid,
+                   /* DEMO */
+                   'first_name' value mqi_record.first_name,
+                   'middle_name' value mqi_record.middle_name,
+                   'last_name' value mqi_record.last_name,
+                   'name_suffix_id' value mqi_record.name_suffix_id,
+                   'birthdate' value mqi_record.birthdate,
+                   'dt_of_death' value mqi_record.dt_of_death,
+                   'email_addr' value mqi_record.email_addr,
+                   'gender_id' value mqi_record.gender_id,
+                   'mar_status_id' value mqi_record.mar_status_id,
+                   'mq_demogr_hash' value mqi_record.mq_demogr_hash,
+                   /* PHONE */
+                   'csm_mbr_phn_id' value mqi_record.csm_mbr_phn_id,
+                   'phone' value mqi_record.phone,
+                   'phone_type_id' value mqi_record.phone_type_id,
+                   'mq_phone_hash' value mqi_record.mq_phone_hash,
+                   /* ADDRESS */
+                   'csm_mbr_addr_id' value mqi_record.csm_mbr_addr_id,
+                   'address1' value mqi_record.address1,
+                   'address2' value mqi_record.address2,
+                   'address3' value mqi_record.address3,
+                   'address4' value mqi_record.address4,
+                   'city' value mqi_record.city,
+                   'county' value mqi_record.county,
+                   'state' value mqi_record.state,
+                   'postal' value mqi_record.postal,
+                   'country' value mqi_record.country,
+                   'mq_address_hash' value mqi_record.mq_address_hash,
+                   'mq_status' value mqi_record.mq_status,
+                   /* AUDIT */
+                   'updated_at' value mqi_record.updated_at,
+                   'updated_by' value mqi_record.updated_by,
+                   'created_at' value mqi_record.created_at,
+                   'created_by' value mqi_record.created_by
+                returning clob)
+                returning clob pretty)
         into o_json
         from dual;
       return o_json;
@@ -740,9 +742,7 @@ create or replace package body qbl.mq_pkg as
                       c.csm_phn = src.phone,
                       c.csm_email = src.email_addr,
                       c.csm_marital_st = src.mar_status_id,
-                      c.csm_mbr_gender = src.gender_id,
-                      c.updated_at = systimestamp,
-                      c.updated_by = g_package_user;
+                      c.csm_mbr_gender = src.gender_id;
             end if;
 
             -- Finalize status for every staged row in the window.

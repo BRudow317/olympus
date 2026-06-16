@@ -4,10 +4,10 @@
     this to incoming MDM values so the nightly MINUS delta does not
     re-flag the member. Keyed by csm_pen_id (= mq_vw.pid).
 
-    Note: this table uses csm_marital_st (single 'i') and csm_mbr_gender,
-    and the updated_at/updated_by audit style of qbl.mq_inbound -- distinct
-    from the create_date/update_date style of the ps_csm_mbr_* tables.
-    Holds only addr1-3 (no addr4), matching the sentinel column set.
+    Note: this table uses csm_marital_st (single 'i') and csm_mbr_gender.
+    The real table carries no updated_at/updated_by columns, so the package
+    does not write audit fields on the census. Holds only addr1-3 (no addr4),
+    matching the sentinel column set.
 **************************************************************************/
 create table qbl.ps_csm_voya_census (
    csm_pen_id      varchar2(12 char) not null
@@ -28,11 +28,8 @@ create table qbl.ps_csm_voya_census (
    csm_email       varchar2(120 char),
    csm_marital_st  number,
    csm_mbr_gender  number,
-   /* AUDIT FIELDS */
-   updated_at      timestamp default on null systimestamp not null,
-   updated_by      varchar2(32 char) default on null nvl(
-      sys_context('userenv','client_identifier'), user
-   ) not null,
+   /* AUDIT FIELDS -- the real ps_csm_voya_census carries no updated_at/updated_by;
+      the package does not write audit columns on the census. */
    created_at      timestamp default on null systimestamp not null,
    created_by      varchar2(32 char) default on null nvl(
       sys_context('userenv','client_identifier'), user
