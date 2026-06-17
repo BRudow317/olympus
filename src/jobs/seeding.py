@@ -18,6 +18,7 @@ from src.oracle.Oracle import Oracle
 from src.models import DataSource, System, Table, Schema, Records
 from src.oracle.OracleModels import to_oracle_snake
 from src.sf.SfClient import SalesforceRequestError
+from src.rules import Redactor, apply_structural_rules, ssn_fields, SSN_FIELD
 
 if TYPE_CHECKING:
     from src.models import Column
@@ -99,6 +100,39 @@ def _rename_records(records: Records, rename: dict[str, str]) -> Records:
     )
 
 
+def _redact_records(records: Records, ssn_map: dict[str, str], redactor: Redactor) -> Records:
+    """Lazily redact SSN-bearing fields before records leave the source.
+
+    ssn_map is keyed by SOURCE field name, so this must run before key renaming.
+    A field whose whole value is an SSN is masked outright; a free-text field is
+    scanned and only the SSN matches inside it are replaced. A no-op when the
+    redactor is disabled or no field carries an SSN rule.
+    """
+    if not redactor.enabled or not ssn_map:
+        return records
+
+    source_data = records.data
+
+    def redacted() -> Iterator[dict[str, Any]]:
+        for row in source_data:
+            new_row = dict(row)
+            for field_name, kind in ssn_map.items():
+                if field_name not in new_row:
+                    continue
+                if kind == SSN_FIELD:
+                    new_row[field_name] = redactor.redact_value(new_row[field_name])
+                else:
+                    new_row[field_name] = redactor.scan_text(new_row[field_name])
+            yield new_row
+
+    return Records(
+        data=redacted(),
+        columns=records.columns,
+        code=records.code,
+        message=records.message,
+    )
+
+
 def seeding(
     source_system: System,
     source_environment: str,
@@ -108,7 +142,8 @@ def seeding(
     target_namespace: str | None,
     tables: list[str],
     action: str,
-    external_id_field: str | None = None
+    external_id_field: str | None = None,
+    redaction: str = "none",
 ) -> DataSource:
     """Orchestrates schema compilation, extraction loops, re-keying maps, and loader targets."""
     source_system = System(source_system)
@@ -116,6 +151,7 @@ def seeding(
 
     source: DataSource = get_datasource(source_system, source_environment, source_namespace)
     target: DataSource = get_datasource(target_system, target_environment, target_namespace)
+    redactor = Redactor(redaction)
     skipped: list[str] = []
     
     if tables and tables[0] == "*" and len(tables) == 1:
@@ -131,6 +167,10 @@ def seeding(
                 namespace=source_namespace,
             )
             described_source_table: Table[Any] = source.describe_table(source_stub)
+
+            # Force-type overrides (e.g. Case.Description -> CLOB) are stamped onto
+            # the source columns so they flow through the target's type translation.
+            apply_structural_rules(source_system, table_name, described_source_table.columns)
 
             target_name: str = resolve_cross_system_name(table_name, source_system, target_system)
             target_stub: Table[Any] = Table(
@@ -150,6 +190,11 @@ def seeding(
                 raise RuntimeError(
                     f"Failed to read records from {described_source_table.name}: {records.message}"
                 )
+
+            # Redact SSN-bearing fields while records are still keyed by their
+            # source names, before they are renamed to target column names.
+            ssn_map = ssn_fields(source_system, table_name, described_source_table.columns)
+            records = _redact_records(records, ssn_map, redactor)
 
             rename = _build_rename_map(described_source_table.columns, target_table.columns)
             records = _rename_records(records, rename)

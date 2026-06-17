@@ -6,6 +6,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 import os
 from src.models import System
 from src.jobs.seeding import seeding
+from src.rules import REDACTION_MODES, normalize_redaction_mode
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.models import DataSource
@@ -60,6 +61,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         nargs="+",
         help="Optional post-migration scripts (e.g. .sql files) to run on the target after seeding.",
     )
+    parser.add_argument(
+        "--redaction", "--redaction-mode", "--redaction_mode",
+        required=False,
+        type=normalize_redaction_mode,
+        default="none",
+        help=(
+            "How SSN-bearing fields (see src/rules.py) are redacted: "
+            f"{', '.join(REDACTION_MODES)} (default: none). Hyphen and underscore "
+            "forms are interchangeable (full-mask == full_mask). hash-mask "
+            "requires REDACTION_SECRET in the environment."
+        ),
+    )
     return parser.parse_args(argv)
 
 def strip_rundeck_prefix(env_name: str):
@@ -85,7 +98,8 @@ def main(argv: list[str] | None = None) -> int:
         target_namespace=args.target_namespace,
         tables=args.tables,
         action=args.action,
-        external_id_field=args.external_id_field
+        external_id_field=args.external_id_field,
+        redaction=args.redaction,
     )
 
     if args.scripts:

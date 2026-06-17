@@ -77,8 +77,14 @@ def oracle_to_python(raw_type: str, scale: int | None = None, max_length: int | 
     return PythonTypes.string
 
 def python_to_oracle(column: Column) -> str:
+    # A force_type rule (e.g. Case.Description -> CLOB) wins over the type we
+    # would otherwise infer from python_type. See src/rules.py.
+    forced = (column.properties or {}).get("force_oracle_type")
+    if forced:
+        return str(forced).upper()
+
     ptype = column.python_type or None
-    
+
     if ptype is None:
         raise ValueError(f"Column {column.name} is missing 'python_type' in properties.")
         
