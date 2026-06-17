@@ -611,11 +611,22 @@ class Oracle(DataSource):
                     if col.raw_type == "VARCHAR2" and db_raw_type == "VARCHAR2":
                         db_length = int(row.get("CHAR_LENGTH") or row.get("DATA_LENGTH") or 0)
                         # Booleans are fixed at VARCHAR2(1 CHAR) ('Y'/'N'); mirror the
-                        # special-case in OracleColumn.column_definition() so the growth
-                        # buffer in effective_max_varchar2 doesn't widen them.
-                        target_length = 1 if col.python_type == PythonTypes.boolean else col.effective_max_varchar2
-                        if target_length > db_length:
-                            alter_clauses.append(f"MODIFY {col.oracle_name} VARCHAR2({target_length} CHAR)")
+                        # special-case in OracleColumn.column_definition().
+                        if col.python_type == PythonTypes.boolean:
+                            required = 1
+                            grown = 1
+                        else:
+                            required = max(col.char_length or 0, col.max_length or 0)
+                            grown = col.effective_max_varchar2
+                        # Only ALTER when the real source width genuinely exceeds the
+                        # existing column. The growth buffer baked into
+                        # effective_max_varchar2 is a one-time create-time cushion, not a
+                        # reason to widen an already-adequate column: comparing the
+                        # buffered width against db_length made every load re-issue a
+                        # redundant MODIFY (and grow unbounded on oracle->oracle round
+                        # trips), churning keyed/fixed-size columns on each batch.
+                        if required > db_length:
+                            alter_clauses.append(f"MODIFY {col.oracle_name} VARCHAR2({grown} CHAR)")
                     elif col.raw_type and col.raw_type.upper() != _normalize_ora_type(db_raw_type):
                         # Direct Datatype modification clause (safeguarded for compatible conversions like NUMBER sizes)
                         definition_clause = col.column_definition()

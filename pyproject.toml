@@ -16,11 +16,6 @@ dependencies = [
     "pytest",
     "pyarrow"
 ]
-# The presence of this table is the opt-in marker. With it, charon manages an
-# offline venv from vendored wheels. Remove it and charon reverts to plain
-# pass-through for this repo (no venv management), exactly like a generic job.
-[tool.charon]
-managed = true
 
 
 [project.optional-dependencies]

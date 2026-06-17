@@ -19,12 +19,12 @@ os.environ["PROGRAM_NAME"] = PROGRAM_NAME
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog=PROGRAM_NAME, add_help=True)
-    parser.add_argument("--source-system", choices=list(System), required=True, type=System)
-    parser.add_argument("--source-environment", required=True, type=str)
-    parser.add_argument("--source-namespace", required=False, type=str, default=None)
-    parser.add_argument("--target-system", choices=list(System), required=True, type=System)
-    parser.add_argument("--target-environment", required=True, type=str)
-    parser.add_argument("--target-namespace", required=False, type=str, default=None)
+    parser.add_argument("--source-system", "--source_system",choices=list(System), required=True, type=System)
+    parser.add_argument("--source-environment","--source_environment", required=True, type=str)
+    parser.add_argument("--source-namespace", "--source_namespace", required=False, type=str, default=None)
+    parser.add_argument("--target-system", "--target_system", choices=list(System), required=True, type=System)
+    parser.add_argument("--target-environment", "--target_environment", required=True, type=str)
+    parser.add_argument("--target-namespace", "--target_namespace", required=False, type=str, default=None)
     parser.add_argument(
         "--action",
         required=False,
@@ -38,7 +38,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--external-id-field",
+        "--external-id-field", "--external_id_field",
         required=False,
         type=str,
         default=None,
@@ -63,14 +63,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 def strip_rundeck_prefix(env_name: str):
-    """Sanitizes configuration parameters passed down from automated Rundeck job runners."""
+    """Sanitizes args passed down from automated Rundeck job runners."""
     env_name = env_name.lower()
     if env_name.startswith('sf_'):
         env_name = env_name.lstrip('sf_')
     return env_name
 
 def main(argv: list[str] | None = None) -> int:
-    """Invokes seeding actions across boundaries and triggers contextual downstream scripts."""
     args: argparse.Namespace = parse_args(argv)
 
     source_env = strip_rundeck_prefix(args.source_environment) or ""
