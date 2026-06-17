@@ -38,8 +38,13 @@ CREATE TABLE {schema}.PYTEST_SEED (
 
 # helpers 
 def _run_cli(*args: str) -> None:
+    # These tests target unmanaged scratch tables in dev environments, so opt out
+    # of the destructive-op guard's default 'restricted' mode unless a test sets
+    # its own --destructive flag.
+    if not any(a.startswith("--destructive") for a in args):
+        args = (*args, "--destructive", "yes")
     result = subprocess.run(
-        [sys.executable, "charon.py", "--exec", "src/app.py", *args],
+        [sys.executable, "main.py", "--exec", "src/app.py", *args],
         capture_output=True, text=True,
     )
     if result.returncode != 0:

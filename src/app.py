@@ -5,8 +5,9 @@ import logging
 logger: logging.Logger = logging.getLogger(__name__)
 import os
 from src.models import System
-from src.jobs.seeding import seeding
-from src.rules import REDACTION_MODES, normalize_redaction_mode
+from src.services.seeding import seeding
+from src.redaction import REDACTION_MODES, DEFAULT_REDACTION_MODE, normalize_redaction_mode
+from src.settings.guard import DESTRUCTIVE_MODES, DEFAULT_DESTRUCTIVE_MODE, normalize_destructive_mode
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.models import DataSource
@@ -65,12 +66,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--redaction", "--redaction-mode", "--redaction_mode",
         required=False,
         type=normalize_redaction_mode,
-        default="none",
+        default=DEFAULT_REDACTION_MODE,
         help=(
             "How SSN-bearing fields (see src/rules.py) are redacted: "
             f"{', '.join(REDACTION_MODES)} (default: none). Hyphen and underscore "
             "forms are interchangeable (full-mask == full_mask). hash-mask "
             "requires REDACTION_SECRET in the environment."
+        ),
+    )
+    parser.add_argument(
+        "--destructive", "--destructive-mode", "--destructive_mode",
+        required=False,
+        type=normalize_destructive_mode,
+        default=DEFAULT_DESTRUCTIVE_MODE,
+        help=(
+            "Safety gate for destructive ops (truncate / drop / alter): "
+            f"{', '.join(DESTRUCTIVE_MODES)} (default: {DEFAULT_DESTRUCTIVE_MODE}). "
+            "'no' blocks all; 'restricted' allows only tool-managed tables "
+            "(SF_*/ora_*__c); 'dev-only' allows only non-prod environments; 'yes' "
+            "allows all. Hyphen/underscore interchangeable (dev-only == dev_only). "
+            "Production truncate/drop additionally requires ALLOW_PROD_DESTRUCTIVE."
         ),
     )
     return parser.parse_args(argv)
@@ -100,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
         action=args.action,
         external_id_field=args.external_id_field,
         redaction=args.redaction,
+        destructive=args.destructive,
     )
 
     if args.scripts:

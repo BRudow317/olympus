@@ -18,7 +18,10 @@ from src.oracle.Oracle import Oracle
 from src.models import DataSource, System, Table, Schema, Records
 from src.oracle.OracleModels import to_oracle_snake
 from src.sf.SfClient import SalesforceRequestError
-from src.rules import Redactor, apply_structural_rules, ssn_fields, SSN_FIELD
+from src.redaction import Redactor, RedactionScope
+from src.settings.rules import apply_structural_rules, redaction_fields
+from src.settings.guard import DestructiveGuard, DEFAULT_DESTRUCTIVE_MODE
+from src import settings
 
 if TYPE_CHECKING:
     from src.models import Column
@@ -100,30 +103,23 @@ def _rename_records(records: Records, rename: dict[str, str]) -> Records:
     )
 
 
-def _redact_records(records: Records, ssn_map: dict[str, str], redactor: Redactor) -> Records:
-    """Lazily redact SSN-bearing fields before records leave the source.
+def _redact_records(
+    records: Records, plan: dict[str, RedactionScope], redactor: Redactor
+) -> Records:
+    """Lazily apply a redaction plan to records before they leave the source.
 
-    ssn_map is keyed by SOURCE field name, so this must run before key renaming.
-    A field whose whole value is an SSN is masked outright; a free-text field is
-    scanned and only the SSN matches inside it are replaced. A no-op when the
-    redactor is disabled or no field carries an SSN rule.
+    The plan is keyed by SOURCE field name, so this must run before key renaming.
+    Field/scan scope handling lives behind the boundary in Redactor.redact_record;
+    here we just stream. A no-op when the redactor is disabled or the plan empty.
     """
-    if not redactor.enabled or not ssn_map:
+    if not redactor.enabled or not plan:
         return records
 
     source_data = records.data
 
     def redacted() -> Iterator[dict[str, Any]]:
         for row in source_data:
-            new_row = dict(row)
-            for field_name, kind in ssn_map.items():
-                if field_name not in new_row:
-                    continue
-                if kind == SSN_FIELD:
-                    new_row[field_name] = redactor.redact_value(new_row[field_name])
-                else:
-                    new_row[field_name] = redactor.scan_text(new_row[field_name])
-            yield new_row
+            yield redactor.redact_record(row, plan)
 
     return Records(
         data=redacted(),
@@ -144,14 +140,26 @@ def seeding(
     action: str,
     external_id_field: str | None = None,
     redaction: str = "none",
+    destructive: str = DEFAULT_DESTRUCTIVE_MODE,
 ) -> DataSource:
     """Orchestrates schema compilation, extraction loops, re-keying maps, and loader targets."""
+    # Publish the program's tuning knobs into the environment before any connector
+    # work, so the connectors' use-time reads observe settings (explicit env wins).
+    settings.apply()
+
     source_system = System(source_system)
     target_system = System(target_system)
 
     source: DataSource = get_datasource(source_system, source_environment, source_namespace)
     target: DataSource = get_datasource(target_system, target_environment, target_namespace)
     redactor = Redactor(redaction)
+
+    # The guard gates destructive ops on whichever side performs them (always the
+    # target today, but attach to both so a future read-side op is covered too).
+    guard = DestructiveGuard(destructive)
+    source.guard = guard
+    target.guard = guard
+
     skipped: list[str] = []
     
     if tables and tables[0] == "*" and len(tables) == 1:
@@ -191,10 +199,10 @@ def seeding(
                     f"Failed to read records from {described_source_table.name}: {records.message}"
                 )
 
-            # Redact SSN-bearing fields while records are still keyed by their
+            # Redact sensitive fields while records are still keyed by their
             # source names, before they are renamed to target column names.
-            ssn_map = ssn_fields(source_system, table_name, described_source_table.columns)
-            records = _redact_records(records, ssn_map, redactor)
+            plan = redaction_fields(source_system, table_name, described_source_table.columns)
+            records = _redact_records(records, plan, redactor)
 
             rename = _build_rename_map(described_source_table.columns, target_table.columns)
             records = _rename_records(records, rename)

@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable, Generic, TypeVar
+from typing import Any, Protocol, runtime_checkable, Generic, TypeVar, TYPE_CHECKING
 from collections.abc import Iterator
 from enum import StrEnum
+
+if TYPE_CHECKING:
+    from src.settings.guard import DestructiveGuard
 
 
 class System(StrEnum):
@@ -26,6 +29,20 @@ class PythonTypes(StrEnum):
     byte = "byte"
     bytearray = "bytearray"
     json = "json"         # dict or list
+
+
+class EnvironmentClass(StrEnum):
+    """How safe an environment is to mutate. Drives the destructive-op guard.
+
+    'unknown' is intentionally distinct from a non-prod class: an environment
+    the registry doesn't recognize is treated as production (fail closed), so a
+    typo'd or unregistered target can never be silently assumed safe.
+    """
+    prod = "prod"
+    dev = "dev"
+    qa = "qa"
+    staging = "staging"
+    unknown = "unknown"
 
 
 C = TypeVar("C", bound="Column")
@@ -101,6 +118,7 @@ class Records:
 class DataSource(Protocol):
     environment: str | None
     namespace: str | None
+    guard: "DestructiveGuard | None"
     def is_healthy(self) -> bool: ...
     def describe_schema(self, namespace: str | None = None) -> Schema: ...
     def describe_table(self, table: Table[Any]) -> Table: ...
@@ -108,3 +126,10 @@ class DataSource(Protocol):
     def query(self, statement: str, **kwargs) -> Records: ...
     def get_records(self, table: Table, **kwargs) -> Records: ...
     def load_records(self, action: str, table: Table, records: Records, **kwargs) -> None: ...
+
+    # Safety surface for the destructive-op guard. is_prod defaults to the safe
+    # answer (True) so any data source that doesn't classify its environment is
+    # treated as production.
+    def environment_class(self) -> EnvironmentClass: ...
+    def is_prod(self) -> bool: ...
+    def is_managed_table(self, table_name: str) -> bool: ...

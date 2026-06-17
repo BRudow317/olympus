@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass #, field
 from typing import Any, Literal
+import os
 import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -20,7 +21,20 @@ TIMESTAMP_FMTS: list[str] = ['%Y-%m-%dT%H:%M:%S.%f', '%Y-%m-%dT%H:%M:%S', '%Y-%m
 TZ_OFFSET_RE: re.Pattern[str] = re.compile(r'[+-]\d{2}:\d{2}$')
 
 ORACLE_MAX_VARCHAR2_CHAR = 4000
-varchar2_growth_buffer = 50
+
+_VARCHAR2_GROWTH_BUFFER_DEFAULT = 50
+
+
+def varchar2_growth_buffer() -> int:
+    """Extra chars added when auto-widening a VARCHAR2 to fit oversized data.
+
+    The preferred value is published by settings.tuning via the
+    CHARON_VARCHAR2_GROWTH_BUFFER env var; resolved at use-time so the program's
+    setting (or an explicit env/.env override) is honored. Falls back to the
+    local default so this module needs no settings import and works standalone.
+    """
+    raw = os.environ.get("CHARON_VARCHAR2_GROWTH_BUFFER")
+    return int(raw) if raw else _VARCHAR2_GROWTH_BUFFER_DEFAULT
 
 ORACLE_RESERVED: frozenset[str] = frozenset({
     "ACCESS", "ADD", "ALL", "ALTER", "AND", "ANY", "AS", "ASC", "AUDIT", 
@@ -161,7 +175,7 @@ class OracleColumn(Column):
                 f"observed_char_len {observed} exceeds Oracle max {ORACLE_MAX_VARCHAR2_CHAR}"
             )
             
-        buffered: int = observed + varchar2_growth_buffer
+        buffered: int = observed + varchar2_growth_buffer()
         return min(buffered, ORACLE_MAX_VARCHAR2_CHAR)
 
     def column_definition(self) -> str:

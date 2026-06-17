@@ -25,7 +25,7 @@ from src.oracle.OracleTypeMap import (
     normalize_cell,
 )
 from src.oracle.OracleModels import OracleColumn, to_oracle_snake, ORACLE_RESERVED
-from src.jobs.seeding import resolve_cross_system_name, _build_rename_map
+from src.services.seeding import resolve_cross_system_name, _build_rename_map
 
 
 

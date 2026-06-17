@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from charon import parse_config_file
+from main import parse_config_file
 
 ORACLE_ENVIRONMENTS = ["dev01", "dev02"]
 SALESFORCE_ENVIRONMENTS = ["devint"]

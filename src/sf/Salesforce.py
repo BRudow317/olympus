@@ -4,11 +4,14 @@ from __future__ import annotations
 import logging
 import csv
 import io
+import os
 from collections.abc import Iterator
 from typing import Any
 from urllib.parse import quote
 
-from src.models import DataSource, Column, Records, Schema, System, Table
+from src.models import DataSource, Column, Records, Schema, System, Table, EnvironmentClass
+from src.settings.environments import classify_environment, is_production
+from src.settings.guard import DestructiveGuard, DestructiveOp, GuardRequest
 from src.sf.SfBulk2 import Bulk2
 from src.sf.SfClient import SfClient, SKIP_NAMES, SKIP_SUFFIXES, HttpMethod as http, SalesforceRequestError
 from src.sf.SfTypeMap import sf_type_to_python
@@ -19,15 +22,32 @@ logger: logging.Logger = logging.getLogger(__name__)
 # 1. OPTIMIZATION BUDGETS & EXTRACTION THRESHOLDS
 # ==============================================================================
 
-# A SOQL SELECT with many columns is sent on the GET /query request line, which
-# Salesforce's front-end caps (HTTP 431). Above this encoded-length budget we
-# route the query through the Bulk API 2.0 (SOQL travels in the POST body).
-_SOQL_GET_MAX_ENCODED: int = 6000
+# These routing thresholds are resolved at use-time from CHARON_* env vars
+# published by settings.tuning, each with a local fallback default so this
+# connector keeps working without the settings package (no settings import).
+_SOQL_GET_MAX_ENCODED_DEFAULT = 6000
+_BULK_RECORD_THRESHOLD_DEFAULT = 2000
 
-# Objects with more than this many records are extracted via the Bulk API 2.0
-# (one REST page is 2000 rows; beyond that, Bulk streams far more efficiently).
-# All Bulk CSV stays in memory -- it is never written to disk.
-_BULK_RECORD_THRESHOLD: int = 2000
+
+def _soql_get_max_encoded() -> int:
+    """Encoded-SOQL length above which a query routes through Bulk API 2.0.
+
+    A SOQL SELECT with many columns is sent on the GET /query request line, which
+    Salesforce's front-end caps (HTTP 431); above this budget the SOQL travels in
+    the Bulk API 2.0 POST body instead.
+    """
+    raw = os.environ.get("CHARON_SF_SOQL_GET_MAX_ENCODED")
+    return int(raw) if raw else _SOQL_GET_MAX_ENCODED_DEFAULT
+
+
+def _bulk_record_threshold() -> int:
+    """Object row count above which extraction routes through Bulk API 2.0.
+
+    One REST page is 2000 rows; beyond that, Bulk streams far more efficiently.
+    All Bulk CSV stays in memory -- it is never written to disk.
+    """
+    raw = os.environ.get("CHARON_SF_BULK_RECORD_THRESHOLD")
+    return int(raw) if raw else _BULK_RECORD_THRESHOLD_DEFAULT
 
 
 # ==============================================================================
@@ -39,6 +59,8 @@ class Salesforce(DataSource):
     max_retries = 1
     environment: str | None
     namespace: str | None
+    # Destructive-op guard, injected by the orchestrator. None == unguarded.
+    guard: DestructiveGuard | None
 
     def __init__(self, environment: str, namespace: str | None = None) -> None:
         """Establishes environment variables, instantiates REST drivers, and maps Bulk clients."""
@@ -46,6 +68,33 @@ class Salesforce(DataSource):
         self.namespace = namespace
         self.client = SfClient.client_constructor(environment)
         self.bulk2_client = Bulk2(self.client)
+        self.guard = None
+
+    # --- destructive-op safety surface (see src/guard.py) ---
+
+    def environment_class(self) -> EnvironmentClass:
+        return classify_environment(System.salesforce, self.environment)
+
+    def is_prod(self) -> bool:
+        return is_production(self.environment_class())
+
+    def is_managed_table(self, table_name: str) -> bool:
+        """True for objects this tool imports from Oracle (named ora_*__c)."""
+        name = table_name.lower()
+        return name.startswith("ora_") and name.endswith("__c")
+
+    def _guard_destructive(self, op: DestructiveOp, table_name: str) -> None:
+        """Enforce the guard before a destructive op; no-op when unguarded."""
+        if self.guard is None:
+            return
+        self.guard.enforce(GuardRequest(
+            op=op,
+            system=System.salesforce,
+            environment=self.environment or "",
+            env_class=self.environment_class(),
+            table_name=table_name,
+            is_managed=self.is_managed_table(table_name),
+        ))
 
     def _request_records(self, soql: str, force_bulk: bool = False) -> Iterator[dict[str, Any]]:
         """Stream records for a SOQL query, choosing REST vs Bulk.
@@ -56,7 +105,7 @@ class Salesforce(DataSource):
         431 can only occur on the initial request (pagination uses a short
         locator URL), so the fallback never re-yields already-emitted rows.
         """
-        if force_bulk or len(quote(soql)) > _SOQL_GET_MAX_ENCODED:
+        if force_bulk or len(quote(soql)) > _soql_get_max_encoded():
             logger.info("Using Bulk API 2.0 for query (force_bulk=%s).", force_bulk)
             yield from self._bulk_query_records(soql)
             return
@@ -237,7 +286,7 @@ class Salesforce(DataSource):
         rather than aborting the whole migration here.
         """
         try:
-            return self.client.record_count(object_name) > _BULK_RECORD_THRESHOLD
+            return self.client.record_count(object_name) > _bulk_record_threshold()
         except Exception as e:
             logger.debug("Row-count probe failed for %s (%s); routing via REST.", object_name, e)
             return False
@@ -308,9 +357,11 @@ class Salesforce(DataSource):
             results = sobj.insert([_prep(r, exclude_id=True) for r in raw_rows])
         elif action in ("reset", "full_load"):
             # Salesforce sobjects can't be dropped, so a full_load is the closest
-            # equivalent: delete every existing record, then insert fresh.
+            # equivalent: delete every existing record, then insert fresh. The
+            # delete is the data-loss op, so it is guarded like a TRUNCATE.
             existing = list(self._request_records(f"SELECT Id FROM {table.name}"))
             if existing:
+                self._guard_destructive(DestructiveOp.truncate, table.name)
                 sobj.delete([{"Id": r["Id"]} for r in existing])
             results = sobj.insert([_prep(r, exclude_id=True) for r in raw_rows])
         elif action == "upsert":

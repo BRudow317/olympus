@@ -30,8 +30,10 @@ from datetime import datetime
 from typing import IO, TextIO
 
 PROGRAM_NAME = "charon"
+os.environ['PROGRAM_NAME'] = str(PROGRAM_NAME)
 DEFAULT_CONFIG_FILE = '/stage/rundeck-scripts/.env'
 PROGRAM_ROOT = Path(__file__).resolve().parent
+os.environ['PROGRAM_ROOT'] = str(PROGRAM_ROOT)
 _MIN_PYTHON = (3, 11)
 _LOG_FORMAT = '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
 _PYTHON_BASENAMES = {"python", "python3", "python3.11", "python3.13"}
@@ -143,6 +145,8 @@ def setup_logging(
 def parse_config_file(config_path: str | Path = "", env: str = "") -> dict[str, str]:
     """Extracts local configurations and resolves variables recursively via uppercase interpolation rules."""
     _VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)")
+
+
     
     if os.name == 'nt':
         root_path = str(Path.home())

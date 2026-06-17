@@ -9,7 +9,9 @@ from itertools import islice
 from collections.abc import Iterator, Iterable
 import oracledb
 
-from src.models import DataSource, Schema, System, Records, Table, Column, PythonTypes
+from src.models import DataSource, Schema, System, Records, Table, Column, PythonTypes, EnvironmentClass
+from src.settings.environments import classify_environment, is_production
+from src.settings.guard import DestructiveGuard, DestructiveOp, GuardRequest
 from src.oracle.OracleClient import OracleClient
 from src.oracle.OracleTypeMap import to_oracle_table, oracle_to_python, normalize_cell, immutable_constraints #, python_to_oracle #, raw_type_to_oracledb_input_size
 from src.oracle.OracleModels import (
@@ -65,12 +67,42 @@ class Oracle(DataSource):
     client: OracleClient
     environment: str | None
     namespace: str | None
+    # Destructive-op guard, injected by the orchestrator. None == unguarded
+    # (direct programmatic use); the CLI always sets one.
+    guard: DestructiveGuard | None
 
     def __init__(self, environment: str, namespace: str | None = None) -> None:
         # self._get_oracle_client(environment.upper())
         self.environment = environment.upper()
         self.client: OracleClient = OracleClient.client_constructor(self.environment)
         self.namespace = namespace.upper() if namespace else self.client.user.upper()
+        self.guard = None
+
+    # --- destructive-op safety surface (see src/guard.py) ---
+
+    def environment_class(self) -> EnvironmentClass:
+        return classify_environment(System.oracle, self.environment)
+
+    def is_prod(self) -> bool:
+        return is_production(self.environment_class())
+
+    def is_managed_table(self, table_name: str) -> bool:
+        """True for tables this tool imports from Salesforce (prefixed SF_)."""
+        bare = table_name.rsplit(".", 1)[-1]  # tolerate schema-qualified names
+        return bare.upper().startswith("SF_")
+
+    def _guard_destructive(self, op: DestructiveOp, table_name: str) -> None:
+        """Enforce the guard before a destructive op; no-op when unguarded."""
+        if self.guard is None:
+            return
+        self.guard.enforce(GuardRequest(
+            op=op,
+            system=System.oracle,
+            environment=self.environment or "",
+            env_class=self.environment_class(),
+            table_name=table_name,
+            is_managed=self.is_managed_table(table_name),
+        ))
 
     def schema(self, namespace: str | None = None) -> str:
         return (
@@ -213,6 +245,7 @@ class Oracle(DataSource):
         data = mutated_records.data
         
         if action == 'reset':
+            self._guard_destructive(DestructiveOp.truncate, oracle_table.qualified_name)
             self.client.execute(f"TRUNCATE TABLE {oracle_table.qualified_name} CASCADE")
             self.client.commit()
 
@@ -319,6 +352,10 @@ class Oracle(DataSource):
             for col_name in promote:
                 widen.pop(col_name, None)
 
+            # All three adaptations are structural ALTERs; gate them once before
+            # touching the table.
+            if widen or promote or relax_null:
+                self._guard_destructive(DestructiveOp.alter, oracle_table.qualified_name)
             if widen:
                 self._widen_columns(connection, cursor, oracle_table, widen)
             if promote:
@@ -362,7 +399,7 @@ class Oracle(DataSource):
                     f"exceeding the VARCHAR2 maximum of {ORACLE_MAX_VARCHAR2_CHAR}."
                 )
 
-            new_size = min(required + varchar2_growth_buffer, ORACLE_MAX_VARCHAR2_CHAR)
+            new_size = min(required + varchar2_growth_buffer(), ORACLE_MAX_VARCHAR2_CHAR)
             alter_sql = f"ALTER TABLE {oracle_table.qualified_name} MODIFY ({col_name} VARCHAR2({new_size} CHAR))"
             logger.info(
                 "Widening '%s.%s' to VARCHAR2(%d CHAR) to fit oversized source data (actual %d).",
@@ -556,6 +593,7 @@ class Oracle(DataSource):
                 "full_load: dropping '%s' so it is recreated from scratch.",
                 ora_table.qualified_name,
             )
+            self._guard_destructive(DestructiveOp.drop, ora_table.qualified_name)
             self.client.execute(f"DROP TABLE {ora_table.qualified_name} CASCADE CONSTRAINTS")
             self.client.commit()
 
@@ -648,6 +686,7 @@ class Oracle(DataSource):
                         
                     # C. Execute ALTER MODIFY statements immediately if structural drift is discovered
                     if alter_clauses:
+                        self._guard_destructive(DestructiveOp.alter, ora_table.qualified_name)
                         for clause in alter_clauses:
                             alter_sql = f"ALTER TABLE {ora_table.qualified_name} {clause}"
                             logger.info(f"Syncing schema drift on '{ora_table.qualified_name}': {alter_sql}")
@@ -656,6 +695,7 @@ class Oracle(DataSource):
                         
             # D. Handle Column Appends (ALTER TABLE ADD)
             if new_cols:
+                self._guard_destructive(DestructiveOp.alter, ora_table.qualified_name)
                 self.mutate_add_columns(ora_table, new_cols)
                 ora_table.clear_caches()
                 # Re-fetch catalog mappings from database and re-evaluate changes loop
