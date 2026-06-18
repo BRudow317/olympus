@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "charon": {
+      "command": "Q:/charon/.venv/Scripts/python.exe",
+      "args": ["Q:/charon/mcp_server.py"],
+      "cwd": "Q:/charon",
+      "env": {}
+    }
+  }
+}
