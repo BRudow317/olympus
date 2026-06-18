@@ -98,7 +98,7 @@ create or replace force view qbl.mq_vw as
              )
              || nvl(
                 to_char(p.csm_phn_type_id),
-                chr(0)
+                chr(124)
              ),
              'MD5'
           )) as mq_phone_hash,

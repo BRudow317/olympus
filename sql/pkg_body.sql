@@ -24,25 +24,42 @@ create or replace package body qbl.mq_pkg as
        202 staged, 200 changed, 304 no change, 404 pid not in source, 500 error. */
 
     /**************************************************************************
-        Single source of truth for per-record business logic.
+        Compare cursor + batch type.
 
-        process_window_setbased is THE engine: it MERGEs the demographic,
-        address and phone changes for an mq_id window against current ERM state
-        (qbl.mq_vw). Both public entrypoints drive it:
-          - mq_insert  -> a window of exactly one mq_id (real-time, single row)
-          - process_mq_inbound -> full windows, with a per-row fallback that
-            simply re-runs the same engine over a one-mq_id window.
-        There is no second copy of the mappings or hash gates to keep in sync.
+        ONE call to qbl.mq_vw, joined to the staged rows, carrying both the
+        current-state hashes/ids (from the view) and the inbound hashes/values
+        (from mq_inbound). process_record then compares the three hashes in
+        memory and only touches a source table when a hash differs -- so the
+        expensive view is evaluated once per pass, never once per leg.
+
+        Note: mq_inbound.csm_mbr_*_id are persistence/audit columns only. The
+        DML target keys come from the view (src_demogr_id / src_addr_id /
+        src_phn_id), never from the inbound staging columns. Assumes qbl.mq_vw
+        yields one row per pid (the phone leg is pinned to type 1).
     **************************************************************************/
+   cursor c_mqi (
+      p_status  in number,
+      p_from_id in number,
+      p_to_id   in number
+   ) is
+   select mqi.*,
+          v.pid               as src_pid,
+          v.csm_mbr_demogr_id as src_demogr_id,
+          v.csm_mbr_addr_id   as src_addr_id,
+          v.csm_mbr_phn_id    as src_phn_id,
+          v.mq_demogr_hash    as src_demo_hash,
+          v.mq_address_hash   as src_address_hash,
+          v.mq_phone_hash     as src_phone_hash
+     from qbl.mq_inbound mqi
+     left join qbl.mq_vw v
+   on v.pid = mqi.pid
+    where mqi.mq_status = p_status
+      and mqi.mq_id >= p_from_id
+      and mqi.mq_id <= nvl(p_to_id, mqi.mq_id)
+    order by mqi.mq_id asc;
 
-    /* Forward declaration: the engine body is defined further down, but
-       mq_insert (above it) drives it over a one-mq_id window. */
-   procedure process_window_setbased (
-      i_status    in number,
-      v_low       in number,
-      v_high      in number,
-      i_bulk_mode in number
-   );
+   type t_mqi_table is
+      table of c_mqi%rowtype;
 
     /**************************************************************************
         Package Logging Procedure: qbl.MQ_PKG.MQ_LOGGER
@@ -85,11 +102,11 @@ create or replace package body qbl.mq_pkg as
     /**************************************************************************
         Procedure: census_sentinel
 
-        The single source of truth for mutating qbl.ps_csm_voya_census. Both the
-        set-based engine (in bulk mode) and any future callers go through here,
-        so census column mappings live in exactly one place. Syncs the staged
-        census row to incoming MDM values so the nightly MINUS delta does not
-        re-flag the member.
+        The single source of truth for mutating qbl.ps_csm_voya_census. Called by
+        process_record (in bulk mode, when a member actually changed) and any
+        future callers, so census column mappings live in exactly one place.
+        Syncs the staged census row to incoming MDM values so the nightly MINUS
+        delta does not re-flag the member.
     **************************************************************************/
    procedure census_sentinel (
       i_pen_id      in varchar2,
@@ -355,8 +372,8 @@ create or replace package body qbl.mq_pkg as
     /**************************************************************************
         Function: mq_loader
 
-        Stages a single record into qbl.mq_inbound. No commit -- the caller
-        owns the transaction boundary.
+        Stages a single record into qbl.mq_inbound (the persistent record/log).
+        No commit -- the caller owns the transaction boundary.
     **************************************************************************/
    function mq_loader (
       mqi_record in qbl.mq_inbound%rowtype
@@ -376,12 +393,155 @@ create or replace package body qbl.mq_pkg as
    end mq_loader;
 
     /**************************************************************************
+        Function: process_record
+
+        THE single source of truth for per-record business logic, and the only
+        engine in the package. Given one already-fetched compare row (inbound
+        values + inbound hashes + current-state hashes/ids from qbl.mq_vw), it:
+          1. Returns 404 when the pid is not in source.
+          2. Compares each of the three hashes; only on a difference does it hit
+             the source table -- demographics is a pure UPDATE (the parent always
+             exists), address and phone are UPSERTs (insert when the member has
+             none yet; PK assigned by the table's before-insert trigger).
+          3. If anything changed and we are in bulk mode, syncs the census via
+             census_sentinel (no compare -- just apply the latest values).
+          4. Returns the resulting mq_status (200 changed / 304 no change).
+
+        Targets come from the view (src_*_id), never from the inbound staging
+        columns. Does NOT update mq_inbound, commit, or own a savepoint -- the
+        caller does, so this serves both the single and batch drivers.
+    **************************************************************************/
+   function process_record (
+      p_row       in c_mqi%rowtype,
+      p_bulk_mode in boolean
+   ) return number as
+      v_changed boolean := false;
+   begin
+      -- pid not present in source -> nothing to apply
+      if p_row.src_pid is null then
+         return 404; -- pid not in source
+      end if;
+
+      -- Demographics: UPDATE-only where the demographic hash differs. The parent
+      -- member record is owned upstream and always exists; target id from view.
+      if nvl(p_row.mq_demogr_hash, '#NULL#') != nvl(p_row.src_demo_hash, '#NULL#') then
+         update qbl.ps_csm_mbr_demogr d
+            set d.csm_first_nm = p_row.first_name,
+                d.csm_middle_nm = p_row.middle_name,
+                d.csm_last_nm = p_row.last_name,
+                d.csm_nm_suf_id = p_row.name_suffix_id,
+                d.csm_birth_dt = p_row.birthdate,
+                d.csm_death_dt = p_row.dt_of_death,
+                d.csm_email = p_row.email_addr,
+                d.csm_sex = p_row.gender_id,
+                d.csm_maritial_st = p_row.mar_status_id,
+                d.update_date = systimestamp,
+                d.updated_by = g_package_user
+          where d.csm_mbr_demogr_id = p_row.src_demogr_id;
+         v_changed := true;
+      end if;
+
+      -- Address: UPSERT where the address hash differs. View id present -> UPDATE
+      -- that address; NULL -> the member has no address yet -> INSERT (PK assigned
+      -- by the table's before-insert trigger).
+      if nvl(p_row.mq_address_hash, '#NULL#') != nvl(p_row.src_address_hash, '#NULL#') then
+         merge into qbl.ps_csm_mbr_addr a
+         using ( select p_row.src_demogr_id as csm_mbr_demogr_id,
+                        p_row.src_addr_id   as csm_mbr_addr_id,
+                        p_row.address1 as address1, p_row.address2 as address2,
+                        p_row.address3 as address3, p_row.address4 as address4,
+                        p_row.city as city, p_row.county as county,
+                        p_row.state as state, p_row.postal as postal,
+                        p_row.country as country
+                   from dual ) src
+         on ( a.csm_mbr_demogr_id = src.csm_mbr_demogr_id
+          and a.csm_mbr_addr_id = src.csm_mbr_addr_id )
+         when matched then update
+            set a.csm_addr1 = src.address1,
+                a.csm_addr2 = src.address2,
+                a.csm_addr3 = src.address3,
+                a.csm_addr4 = src.address4,
+                a.csm_city = src.city,
+                a.csm_county = src.county,
+                a.csm_state = src.state,
+                a.csm_postal = src.postal,
+                a.csm_country = src.country,
+                a.update_date = systimestamp,
+                a.updated_by = g_package_user
+         when not matched then insert
+            ( csm_mbr_demogr_id, csm_addr1, csm_addr2, csm_addr3, csm_addr4,
+              csm_city, csm_county, csm_state, csm_postal, csm_country,
+              created_by, updated_by )
+            values
+            ( src.csm_mbr_demogr_id, src.address1, src.address2, src.address3, src.address4,
+              src.city, src.county, src.state, src.postal, src.country,
+              g_package_user, g_package_user );
+         v_changed := true;
+      end if;
+
+      -- Phone: UPSERT where the phone hash differs. mq_vw pins the phone leg to
+      -- type 1, so id present -> UPDATE; NULL -> INSERT (PK assigned by trigger,
+      -- type defaulted to 1).
+      if nvl(p_row.mq_phone_hash, '#NULL#') != nvl(p_row.src_phone_hash, '#NULL#') then
+         merge into qbl.ps_csm_mbr_phn p
+         using ( select p_row.src_demogr_id as csm_mbr_demogr_id,
+                        p_row.src_phn_id    as csm_mbr_phn_id,
+                        p_row.phone as phone,
+                        nvl(p_row.phone_type_id, 1) as phone_type_id
+                   from dual ) src
+         on ( p.csm_mbr_demogr_id = src.csm_mbr_demogr_id
+          and p.csm_mbr_phn_id = src.csm_mbr_phn_id )
+         when matched then update
+            set p.csm_phn_type_id = src.phone_type_id,
+                p.csm_phn = src.phone,
+                p.update_date = systimestamp,
+                p.updated_by = g_package_user
+         when not matched then insert
+            ( csm_mbr_demogr_id, csm_phn, csm_phn_type_id, created_by, updated_by )
+            values
+            ( src.csm_mbr_demogr_id, src.phone, src.phone_type_id,
+              g_package_user, g_package_user );
+         v_changed := true;
+      end if;
+
+      -- Census: only when something changed AND we are in bulk mode. No compare
+      -- here -- census_sentinel just applies the latest values.
+      if v_changed then
+         if p_bulk_mode then
+            census_sentinel(
+               i_pen_id      => p_row.pid,
+               i_first_nm    => p_row.first_name,
+               i_middle_intl => substr(p_row.middle_name, 1, 1),
+               i_last_nm     => p_row.last_name,
+               i_birth_dt    => p_row.birthdate,
+               i_death_dt    => p_row.dt_of_death,
+               i_addr1       => p_row.address1,
+               i_addr2       => p_row.address2,
+               i_addr3       => p_row.address3,
+               i_city        => p_row.city,
+               i_state       => p_row.state,
+               i_country     => p_row.country,
+               i_postal      => p_row.postal,
+               i_phn         => p_row.phone,
+               i_email       => p_row.email_addr,
+               i_marital_st  => p_row.mar_status_id,
+               i_mbr_gender  => p_row.gender_id
+            );
+         end if;
+         return 200; -- change applied
+      else
+         return 304; -- no change
+      end if;
+   end process_record;
+
+    /**************************************************************************
         Procedure: mq_insert
 
         Public single-record API for the integration team. Stages the inbound
-        record, processes it against ERM, returns 0 on success (status 200/304)
-        and raises (response := 1) on failure (404/500). Owns one transaction
-        end to end -- no nested commits, no savepoint-after-commit.
+        record, processes it against ERM via the shared engine, returns 0 on an
+        acceptable outcome (200/304/404) and raises (response := 1) on a genuine
+        error. Owns one transaction end to end. bulk_mode => false: the real-time
+        path never touches the census.
     **************************************************************************/
    procedure mq_insert (
       pid         in varchar2,
@@ -409,6 +569,8 @@ create or replace package body qbl.mq_pkg as
    ) as
       v_procedure_name varchar2(32 char) := 'MQ_INSERT';
       v_mqi_record     qbl.mq_inbound%rowtype;
+      v_row            c_mqi%rowtype;
+      v_status         number;
       v_id             number;
    begin
       v_mqi_record := mqi_record_constructor(
@@ -441,21 +603,35 @@ create or replace package body qbl.mq_pkg as
       v_mqi_record := mq_loader(v_mqi_record);
       v_id := v_mqi_record.mq_id;
 
-      -- Apply this one staged row through the shared engine, scoped to a window
-      -- of exactly this mq_id. The engine resolves current ERM state from
-      -- qbl.mq_vw, applies the demographic / address / phone changes, and
-      -- finalizes mq_status (200/304/404) for the row. bulk_mode => 0: the
-      -- real-time single path does NOT touch the census, so it can never
-      -- trigger the downstream census-delta logic (callers opt in via
-      -- process_mq_inbound's i_bulk_mode).
-      process_window_setbased(202, v_id, v_id, 0);
+      -- One call to mq_vw for this pid (scoped to the staged mq_id), compared in
+      -- memory by process_record, with targeted DML only where a hash differs.
+      open c_mqi(202, v_id, v_id);
+      fetch c_mqi into v_row;
+      if c_mqi%notfound then
+         close c_mqi;
+         raise_application_error(
+            -20003,
+            'Staged MQ_ID=' || v_id || ' not found for processing'
+         );
+      end if;
+      close c_mqi;
+
+      -- Real-time integration updates do NOT sync the census (bulk_mode => false),
+      -- so the single path can never trip the downstream census-delta logic.
+      v_status := process_record(v_row, p_bulk_mode => false);
+
+      update qbl.mq_inbound
+         set mq_status = v_status,
+             updated_at = systimestamp,
+             updated_by = g_package_user
+       where mq_id = v_id;
       commit;
 
       -- 200 ingested, 304 unchanged, 404 pid not in source (rejected, but the
       -- row stays staged in mq_inbound for the audit trail). All three are
       -- acceptable outcomes -> 0. MuleSoft fans out every member; a not-found
-      -- pid is an expected rejection, not a failure. A genuine processing
-      -- error surfaces as an exception below, never as a status value.
+      -- pid is an expected rejection, not a failure. A genuine processing error
+      -- surfaces as an exception below, never as a status value.
       response := 0;
    exception
       when others then
@@ -476,277 +652,14 @@ create or replace package body qbl.mq_pkg as
    end mq_insert;
 
     /*******************************************************
-        process_window_setbased (private)
-
-        Applies one mq_id window set-based: MERGE the demographic, address and
-        phone changes (each gated by a hash diff), optionally sync the census,
-        then finalize mq_status for every row in the window. No commit and no
-        error handling -- the caller owns the transaction and the row fallback.
-    *******************************************************/
-   procedure process_window_setbased (
-      i_status    in number,
-      v_low       in number,
-      v_high      in number,
-      i_bulk_mode in number
-   ) as
-   begin
-            -- Demographics: UPDATE-only where the demographic hash differs. The
-            -- parent member record is owned upstream and always exists, so we
-            -- never insert here. The target id comes from the view (keyed by
-            -- pid); the inbound row never carries it.
-            merge into qbl.ps_csm_mbr_demogr d
-            using (
-               select s.csm_mbr_demogr_id,
-                      s.first_name, s.middle_name, s.last_name, s.name_suffix_id,
-                      s.birthdate, s.dt_of_death, s.email_addr, s.gender_id, s.mar_status_id
-                 from ( select v.csm_mbr_demogr_id,
-                               i.first_name, i.middle_name, i.last_name, i.name_suffix_id,
-                               i.birthdate, i.dt_of_death, i.email_addr, i.gender_id, i.mar_status_id,
-                               row_number() over (
-                                  partition by v.csm_mbr_demogr_id order by i.mq_id desc
-                               ) rn
-                          from qbl.mq_inbound i
-                          join qbl.mq_vw v on v.pid = i.pid
-                         where i.mq_status = i_status
-                           and i.mq_id between v_low and v_high
-                           and v.csm_mbr_demogr_id is not null
-                           and nvl(i.mq_demogr_hash, '#NULL#') != nvl(v.mq_demogr_hash, '#NULL#')
-                      ) s
-                where s.rn = 1
-            ) src
-            on ( d.csm_mbr_demogr_id = src.csm_mbr_demogr_id )
-            when matched then update
-               set d.csm_first_nm = src.first_name,
-                   d.csm_middle_nm = src.middle_name,
-                   d.csm_last_nm = src.last_name,
-                   d.csm_nm_suf_id = src.name_suffix_id,
-                   d.csm_birth_dt = src.birthdate,
-                   d.csm_death_dt = src.dt_of_death,
-                   d.csm_email = src.email_addr,
-                   d.csm_sex = src.gender_id,
-                   d.csm_maritial_st = src.mar_status_id,
-                   d.update_date = systimestamp,
-                   d.updated_by = g_package_user;
-
-            -- Address: UPSERT where the address hash differs. The view supplies
-            -- csm_mbr_addr_id when the member already has an address (-> UPDATE);
-            -- a NULL id means the member has no address yet (-> INSERT, with the
-            -- PK assigned by the table's before-insert trigger). The target ids
-            -- come from the view (v.); the inbound row never carries them.
-            merge into qbl.ps_csm_mbr_addr a
-            using (
-               select s.csm_mbr_demogr_id, s.csm_mbr_addr_id,
-                      s.address1, s.address2, s.address3, s.address4,
-                      s.city, s.county, s.state, s.postal, s.country
-                 from ( select v.csm_mbr_demogr_id, v.csm_mbr_addr_id,
-                               i.address1, i.address2, i.address3, i.address4,
-                               i.city, i.county, i.state, i.postal, i.country,
-                               row_number() over (
-                                  partition by v.csm_mbr_demogr_id, v.csm_mbr_addr_id order by i.mq_id desc
-                               ) rn
-                          from qbl.mq_inbound i
-                          join qbl.mq_vw v on v.pid = i.pid
-                         where i.mq_status = i_status
-                           and i.mq_id between v_low and v_high
-                           and nvl(i.mq_address_hash, '#NULL#') != nvl(v.mq_address_hash, '#NULL#')
-                      ) s
-                where s.rn = 1
-            ) src
-            on ( a.csm_mbr_demogr_id = src.csm_mbr_demogr_id
-             and a.csm_mbr_addr_id = src.csm_mbr_addr_id )
-            when matched then update
-               set a.csm_addr1 = src.address1,
-                   a.csm_addr2 = src.address2,
-                   a.csm_addr3 = src.address3,
-                   a.csm_addr4 = src.address4,
-                   a.csm_city = src.city,
-                   a.csm_county = src.county,
-                   a.csm_state = src.state,
-                   a.csm_postal = src.postal,
-                   a.csm_country = src.country,
-                   a.update_date = systimestamp,
-                   a.updated_by = g_package_user
-            when not matched then insert
-               ( csm_mbr_demogr_id, csm_addr1, csm_addr2, csm_addr3, csm_addr4,
-                 csm_city, csm_county, csm_state, csm_postal, csm_country,
-                 created_by, updated_by )
-               values
-               ( src.csm_mbr_demogr_id, src.address1, src.address2, src.address3, src.address4,
-                 src.city, src.county, src.state, src.postal, src.country,
-                 g_package_user, g_package_user );
-
-            -- Phone: UPSERT where the phone hash differs. mq_vw pins the phone
-            -- leg to type 1, so csm_mbr_phn_id present -> UPDATE that phone;
-            -- NULL -> the member has no type-1 phone yet -> INSERT (PK assigned
-            -- by the table's before-insert trigger, type defaulted to 1). The
-            -- target ids come from the view (v.); the inbound row never carries
-            -- them.
-            merge into qbl.ps_csm_mbr_phn p
-            using (
-               select s.csm_mbr_demogr_id, s.csm_mbr_phn_id, s.phone, s.phone_type_id
-                 from ( select v.csm_mbr_demogr_id, v.csm_mbr_phn_id, i.phone, i.phone_type_id,
-                               row_number() over (
-                                  partition by v.csm_mbr_demogr_id, v.csm_mbr_phn_id order by i.mq_id desc
-                               ) rn
-                          from qbl.mq_inbound i
-                          join qbl.mq_vw v on v.pid = i.pid
-                         where i.mq_status = i_status
-                           and i.mq_id between v_low and v_high
-                           and nvl(i.mq_phone_hash, '#NULL#') != nvl(v.mq_phone_hash, '#NULL#')
-                      ) s
-                where s.rn = 1
-            ) src
-            on ( p.csm_mbr_demogr_id = src.csm_mbr_demogr_id
-             and p.csm_mbr_phn_id = src.csm_mbr_phn_id )
-            when matched then update
-               set p.csm_phn_type_id = nvl(src.phone_type_id, 1),
-                   p.csm_phn = src.phone,
-                   p.update_date = systimestamp,
-                   p.updated_by = g_package_user
-            when not matched then insert
-               ( csm_mbr_demogr_id, csm_phn, csm_phn_type_id, created_by, updated_by )
-               values
-               ( src.csm_mbr_demogr_id, src.phone, nvl(src.phone_type_id, 1),
-                 g_package_user, g_package_user );
-
-            -- Census sentinel: sync the staged census for members that changed.
-            -- Delegated to census_sentinel (the single source of truth for
-            -- census mutation) so the census column mapping lives in exactly
-            -- one place. We pick the latest inbound row per changed pid and call
-            -- the sentinel for each; for a one-mq_id window this is at most one
-            -- call.
-            if i_bulk_mode = 1 then
-               for cs in (
-                  select s.pid, s.first_name, s.middle_name, s.last_name,
-                         s.birthdate, s.dt_of_death, s.address1, s.address2, s.address3,
-                         s.city, s.state, s.postal, s.country, s.phone, s.email_addr,
-                         s.mar_status_id, s.gender_id
-                    from ( select i.pid, i.first_name, i.middle_name, i.last_name,
-                                  i.birthdate, i.dt_of_death, i.address1, i.address2, i.address3,
-                                  i.city, i.state, i.postal, i.country, i.phone, i.email_addr,
-                                  i.mar_status_id, i.gender_id,
-                                  row_number() over (
-                                     partition by i.pid order by i.mq_id desc
-                                  ) rn
-                             from qbl.mq_inbound i
-                             join qbl.mq_vw v on v.pid = i.pid
-                            where i.mq_status = i_status
-                              and i.mq_id between v_low and v_high
-                              and ( nvl(i.mq_demogr_hash, '#NULL#') != nvl(v.mq_demogr_hash, '#NULL#')
-                                 or nvl(i.mq_address_hash, '#NULL#') != nvl(v.mq_address_hash, '#NULL#')
-                                 or nvl(i.mq_phone_hash, '#NULL#') != nvl(v.mq_phone_hash, '#NULL#') )
-                         ) s
-                   where s.rn = 1
-               ) loop
-                  census_sentinel(
-                     i_pen_id      => cs.pid,
-                     i_first_nm    => cs.first_name,
-                     i_middle_intl => substr(cs.middle_name, 1, 1),
-                     i_last_nm     => cs.last_name,
-                     i_birth_dt    => cs.birthdate,
-                     i_death_dt    => cs.dt_of_death,
-                     i_addr1       => cs.address1,
-                     i_addr2       => cs.address2,
-                     i_addr3       => cs.address3,
-                     i_city        => cs.city,
-                     i_state       => cs.state,
-                     i_country     => cs.country,
-                     i_postal      => cs.postal,
-                     i_phn         => cs.phone,
-                     i_email       => cs.email_addr,
-                     i_marital_st  => cs.mar_status_id,
-                     i_mbr_gender  => cs.gender_id
-                  );
-               end loop;
-            end if;
-
-            -- Finalize status for every staged row in the window.
-            merge into qbl.mq_inbound mqi
-            using (
-               select i.mq_id,
-                      case
-                         when v.pid is null then 404
-                         when nvl(i.mq_demogr_hash, '#NULL#') != nvl(v.mq_demogr_hash, '#NULL#')
-                           or nvl(i.mq_address_hash, '#NULL#') != nvl(v.mq_address_hash, '#NULL#')
-                           or nvl(i.mq_phone_hash, '#NULL#') != nvl(v.mq_phone_hash, '#NULL#')
-                         then 200
-                         else 304
-                      end as new_status
-                 from qbl.mq_inbound i
-                 left join qbl.mq_vw v on v.pid = i.pid
-                where i.mq_status = i_status
-                  and i.mq_id between v_low and v_high
-            ) src
-            on ( mqi.mq_id = src.mq_id )
-            when matched then update
-               set mqi.mq_status = src.new_status,
-                   mqi.updated_at = systimestamp,
-                   mqi.updated_by = g_package_user;
-
-   end process_window_setbased;
-
-    /*******************************************************
-        process_window_rowbyrow (private)
-
-        Fallback from batch to row-by-row.
-    *******************************************************/
-   procedure process_window_rowbyrow (
-      i_status         in number,
-      v_low            in number,
-      v_high           in number,
-      i_bulk_mode      in number,
-      i_raise_on_error in number
-   ) as
-      cursor c_ids is
-         select mq_id
-           from qbl.mq_inbound
-          where mq_status = i_status
-            and mq_id between v_low and v_high
-          order by mq_id;
-      v_procedure_name varchar2(100 char) := 'process_mq_inbound (row fallback)';
-   begin
-      -- Re-run the SAME engine one mq_id at a time so a single bad row is
-      -- isolated as 500 while the rest of the window still completes. The only
-      -- thing that lives here is the savepoint the set-based path cannot give
-      -- us -- not a second copy of the business logic.
-      for r in c_ids loop
-         begin
-            savepoint start_of_row;
-            process_window_setbased(i_status, r.mq_id, r.mq_id, i_bulk_mode);
-         exception
-            when others then
-               rollback to start_of_row;
-               update qbl.mq_inbound mqi
-                  set mqi.mq_status = 500,
-                      mqi.updated_at = systimestamp,
-                      mqi.updated_by = g_package_user
-                where mqi.mq_id = r.mq_id;
-               mq_logger(
-                  i_mq_id                 => r.mq_id,
-                  i_json_record           => null,
-                  i_error_code            => sqlcode,
-                  i_error_message         => dbms_utility.format_error_stack,
-                  i_error_location        => dbms_utility.format_error_backtrace,
-                  i_mq_status_code        => 500,
-                  i_procedure_name        => v_procedure_name,
-                  i_procedure_description => 'Row-engine processing error',
-                  i_package_name          => g_package_name
-               );
-               if i_raise_on_error = 1 then
-                  raise;
-               end if;
-         end;
-      end loop;
-      commit;
-   end process_window_rowbyrow;
-
-    /*******************************************************
         qbl.MQ_PKG.PROCESS_MQ_INBOUND
 
-        Public bulk entrypoint. Processes staged rows in mq_id windows: each
-        window is attempted set-based (fast) and committed; if a window throws,
-        it is rolled back and re-run row-by-row so the offending row is isolated
-        as 500 and the rest of the window still completes.
+        Public bulk entrypoint. One pass over the staged rows: a single cursor
+        joins mq_inbound to qbl.mq_vw (so the view is evaluated once, streamed in
+        chunks of i_chunk_size), and process_record compares the hashes in memory
+        and applies only the legs that changed. Each row runs inside its own
+        savepoint, so a bad row is isolated as 500 while the rest of the chunk
+        still commits. i_starting_mq_id lets a re-run resume past processed rows.
     *******************************************************/
    procedure process_mq_inbound (
       i_starting_mq_id in number := 0,
@@ -755,46 +668,57 @@ create or replace package body qbl.mq_pkg as
       i_bulk_mode      in number := 0,
       i_raise_on_error in number := 0
    ) as
-      v_window pls_integer := nvl(nullif(i_chunk_size, 0), 50000);
-      v_low    number := nvl(i_starting_mq_id, 0);
-      v_high   number;
-      v_max    number;
+      v_limit          pls_integer := nvl(nullif(i_chunk_size, 0), 2000);
+      v_batch          t_mqi_table;
+      v_status         number;
+      v_procedure_name varchar2(100 char) := 'PROCESS_MQ_INBOUND';
    begin
-      select max(mq_id)
-        into v_max
-        from qbl.mq_inbound
-       where mq_status = i_status
-         and mq_id >= v_low;
-
-      if v_max is null then
-         return;
-      end if;
-
-      while v_low <= v_max loop
-         v_high := v_low + v_window - 1;
-         begin
-            -- Fast path: apply the whole window set-based, then commit it.
-            process_window_setbased(i_status, v_low, v_high, i_bulk_mode);
-            commit;
-         exception
-            when others then
-               -- re-run the window row-by-row to isolate the error records.
-               rollback;
-               mq_logger(
-                  i_mq_id                 => null,
-                  i_json_record           => null,
-                  i_error_code            => sqlcode,
-                  i_error_message         => dbms_utility.format_error_stack,
-                  i_error_location        => dbms_utility.format_error_backtrace,
-                  i_mq_status_code        => 500,
-                  i_procedure_name        => 'process_mq_inbound',
-                  i_procedure_description => 'Set-based window ' || v_low || '-' || v_high || ' failed; falling back row-by-row',
-                  i_package_name          => g_package_name
-               );
-               process_window_rowbyrow(i_status, v_low, v_high, i_bulk_mode, i_raise_on_error);
-         end;
-         v_low := v_high + 1;
+      open c_mqi(i_status, nvl(i_starting_mq_id, 0), null);
+      loop
+         fetch c_mqi bulk collect into v_batch limit v_limit;
+         exit when v_batch.count = 0;
+         for i in 1..v_batch.count loop
+            begin
+               savepoint start_of_row;
+               v_status := process_record(v_batch(i), p_bulk_mode => ( i_bulk_mode = 1 ));
+               update qbl.mq_inbound mqi
+                  set mqi.mq_status = v_status,
+                      mqi.updated_at = systimestamp,
+                      mqi.updated_by = g_package_user
+                where mqi.mq_id = v_batch(i).mq_id;
+            exception
+               when others then
+                  rollback to start_of_row;
+                  update qbl.mq_inbound mqi
+                     set mqi.mq_status = 500,
+                         mqi.updated_at = systimestamp,
+                         mqi.updated_by = g_package_user
+                   where mqi.mq_id = v_batch(i).mq_id;
+                  mq_logger(
+                     i_mq_id                 => v_batch(i).mq_id,
+                     i_json_record           => null,
+                     i_error_code            => sqlcode,
+                     i_error_message         => dbms_utility.format_error_stack,
+                     i_error_location        => dbms_utility.format_error_backtrace,
+                     i_mq_status_code        => 500,
+                     i_procedure_name        => v_procedure_name,
+                     i_procedure_description => 'Row-engine processing error',
+                     i_package_name          => g_package_name
+                  );
+                  if i_raise_on_error = 1 then
+                     raise;
+                  end if;
+            end;
+         end loop;
+         commit;
       end loop;
+      close c_mqi;
+   exception
+      when others then
+         if c_mqi%isopen then
+            close c_mqi;
+         end if;
+         raise;
    end process_mq_inbound;
 
     /**************************************************************************

@@ -12,7 +12,8 @@ import pytest
 
 from src.oracle.Oracle import Oracle
 from src.oracle.OracleModels import OracleColumn, OracleTable
-from src.models import Records, PythonTypes, System
+from src.models import Records, PythonTypes, System, Table
+from src.services.seeding import seeding
 
 from tests.conftest import ORACLE_ENVIRONMENTS, SALESFORCE_ENVIRONMENTS
 
@@ -641,3 +642,94 @@ class TestFullLoadDropsTable:
         )
         assert int(got[0]["ID"]) == 1
         assert got[0]["LABEL"] == "fresh"
+
+
+class TestTargetNamespacePropagation:
+    """Regression guard for cross-schema targeting.
+
+    When --target-namespace names a schema other than the connection's login
+    user, the table handed to target.mutate_table must carry that namespace --
+    not the login user. (In Oracle the namespace silently defaults to the login
+    user, so a dropped/ignored --target-namespace would write into the wrong
+    schema.) This is the exact boundary the CLI exercises: app.py forwards the
+    --target-namespace value straight into seeding(), so we drive seeding()
+    in-process with mocked datasources and assert the namespace at that handoff.
+
+    Hermetic by design: no live database -- the Oracle client is stubbed so the
+    only thing under test is the namespace wiring.
+    """
+
+    LOGIN_USER = "QBL"               # AUTO_<ENV>_USER -- the connection identity
+    TARGET_SCHEMA = "QBL_OTHER_USER"  # --target-namespace -- a different schema
+    SOURCE_ENV = "PYTEST_SRC_ENV"
+    TARGET_ENV = "PYTEST_TGT_ENV"
+
+    class _FakeSource:
+        """Minimal DataSource stand-in: describes one table, yields no rows."""
+        namespace = "PYTEST_SRC"
+        guard = None
+
+        def describe_table(self, table: Table) -> Table:
+            return Table(
+                name=table.name,
+                system=System.oracle,
+                namespace=self.namespace,
+                columns=[
+                    OracleColumn(
+                        name="ID", raw_type="NUMBER",
+                        python_type=PythonTypes.integer,
+                        is_primary_key=True, is_nullable=False,
+                    ),
+                ],
+            )
+
+        def get_records(self, table: Table, **kwargs: Any) -> Records:
+            return Records(data=iter([]), code=200)
+
+    def test_target_namespace_overrides_login_user(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Stub the Oracle client so constructing a real Oracle needs no env vars
+        # and no DB connection; it only has to expose the login user.
+        class _FakeClient:
+            user = self.LOGIN_USER
+
+        monkeypatch.setattr(
+            "src.oracle.OracleClient.OracleClient.client_constructor",
+            classmethod(lambda cls, environment: _FakeClient()),
+        )
+
+        # Real Oracle target (so its own namespace resolution runs), with the two
+        # DB-touching methods replaced: mutate_table records the table it is
+        # handed, load_records is a no-op.
+        target = Oracle(self.TARGET_ENV, self.TARGET_SCHEMA)
+        captured: dict[str, Any] = {}
+
+        def _capture_mutate_table(table: Table, source_system: System | None = None, **kwargs: Any) -> Table:
+            captured["namespace"] = table.namespace
+            captured["login_user"] = target.client.user
+            return table
+
+        monkeypatch.setattr(target, "mutate_table", _capture_mutate_table)
+        monkeypatch.setattr(target, "load_records", lambda **kwargs: None)
+
+        source = self._FakeSource()
+
+        def _fake_get_datasource(system: System, environment: str, namespace: str | None):
+            return source if environment == self.SOURCE_ENV else target
+
+        monkeypatch.setattr("src.services.seeding.get_datasource", _fake_get_datasource)
+
+        seeding(
+            source_system=System.oracle,
+            source_environment=self.SOURCE_ENV,
+            source_namespace=source.namespace,
+            target_system=System.oracle,
+            target_environment=self.TARGET_ENV,
+            target_namespace=self.TARGET_SCHEMA,
+            tables=["PYTEST_NS_PROP"],
+            action="insert",
+        )
+
+        # The table reached mutate_table carrying the requested target schema ...
+        assert captured["namespace"] == self.TARGET_SCHEMA
+        # ... which is NOT the connection's login user (the cross-schema bug).
+        assert captured["namespace"] != captured["login_user"]
