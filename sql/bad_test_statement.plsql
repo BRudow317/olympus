@@ -481,14 +481,15 @@ declare
       i_pid_1 in varchar2,
       i_pid_2 in varchar2
    ) is
-      v_vw_rec_1 c_vw_details%rowtype;
-      v_vw_rec_2 c_vw_details%rowtype;
-      v_mq_id_1  number;
-      v_mq_id_2  number;
-      v_mq_id_3  number;
-      v_status_1 number;
-      v_status_2 number;
-      v_status_3 number;
+      v_vw_rec_1        c_vw_details%rowtype;
+      v_vw_rec_2        c_vw_details%rowtype;
+      v_row1_first_name varchar2(10);
+      v_mq_id_1         number;
+      v_mq_id_2         number;
+      v_mq_id_3         number;
+      v_status_1        number;
+      v_status_2        number;
+      v_status_3        number;
    begin
       dbms_output.put_line('--- Running test_process_mq_inbound (Bulk test 1) ---');
       delete from perf.mq_inbound
@@ -501,6 +502,16 @@ declare
       open c_vw_details(i_pid_2);
       fetch c_vw_details into v_vw_rec_2;
       close c_vw_details;
+
+      -- Toggle to a guaranteed-different value so this test is rerun-safe.
+      if nvl(
+         v_vw_rec_1.first_name,
+         'NULL'
+      ) = 'X1' then
+         v_row1_first_name := 'X2';
+      else
+         v_row1_first_name := 'X1';
+      end if;
       
       -- 1. Row to update (status 200)
       insert into perf.mq_inbound (
@@ -527,7 +538,7 @@ declare
          country,
          mq_status
       ) values ( v_vw_rec_1.pid,
-                 v_vw_rec_1.first_name || 'Bulk',
+                 v_row1_first_name,
                  v_vw_rec_1.middle_name,
                  v_vw_rec_1.last_name,
                  v_vw_rec_1.name_suffix_id,
@@ -649,7 +660,7 @@ declare
       assert_source_val(
          i_pid_1,
          'first_name',
-         v_vw_rec_1.first_name || 'Bulk'
+         v_row1_first_name
       );
    end test_process_mq_inbound;
 
@@ -1310,7 +1321,7 @@ begin
        where rownum <= 3;
 
       type t_setup_rec is record (
-         pid varchar2(12)
+         pid varchar2(9)
       );
       type t_setui_pids is
          table of t_setup_rec index by pls_integer;

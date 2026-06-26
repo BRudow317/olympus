@@ -379,7 +379,6 @@ create or replace package body perf.mq_pkg as
    ) as
       v_procedure_name varchar2(32 char) := 'MQ_INSERT';
       v_mqi_record     perf.mq_inbound%rowtype;
-      v_id             number;
    begin
       v_mqi_record := mqi_record_constructor(
          i_pid            => pid,
@@ -408,36 +407,30 @@ create or replace package body perf.mq_pkg as
          i_country        => country
       );
 
-      -- Stage the row (status defaults to 202). The hash + key fields are still
-      -- null here on purpose: process_batch pass 1 hydrates them set-based over
-      -- the one-mq_id window below, the same code path bulk rows take.
+      -- Stage the row which defaults to 202. 
+      -- The hash + key fields are still null here on purpose 
+      -- process_batch pass 1 hydrates them
       v_mqi_record := mqi_loader(v_mqi_record);
-      v_id := v_mqi_record.mq_id;
 
-      -- Apply this one staged row through the shared engine, scoped to a window
-      -- of exactly this mq_id. The engine hydrates keys + hashes, resolves
-      -- current ERM state from perf.mq_vw, applies the demographic / address /
-      -- phone changes, and finalizes mq_status (200/304/404) for the row.
+      -- only performs for a single record.
       process_batch(
          i_status            => 202,
-         i_mq_id_min         => v_id,
-         i_mq_id_max         => v_id,
+         i_mq_id_min         => v_mqi_record.mq_id,
+         i_mq_id_max         => v_mqi_record.mq_id,
          i_block_census_mode => i_block_census_mode
       );
       commit;
 
       -- 200 ingested, 304 unchanged, 404 pid not in source (rejected, but the
-      -- row stays staged in mq_inbound for the audit trail). All three are
-      -- acceptable outcomes -> 0. MuleSoft fans out every member; a not-found
-      -- pid is an expected rejection, not a failure. A genuine processing
-      -- error surfaces as an exception below, never as a status value.
+      -- row stays staged in mq_inbound for the audit trail) All return as 0
       response := 0;
+
    exception
       when others then
          rollback;
          response := 1;
          mq_logger(
-            i_mq_id                 => v_id,
+            i_mq_id                 => v_mqi_record.mq_id,
             i_json_record           => null,
             i_error_code            => sqlcode,
             i_error_message         => dbms_utility.format_error_stack,
