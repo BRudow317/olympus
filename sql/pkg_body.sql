@@ -466,7 +466,7 @@ create or replace package body perf.mq_pkg as
       i_block_census_mode in boolean
    ) as
    begin
-      -- Pass 1a: hashes. STANDARD_HASH is SQL-only on 19c, so compute inline in
+      -- Pass 1a: hashes. STANDARD_HASH is SQL only on 19c, so compute inline in
       -- a set-based UPDATE. These expressions MUST match perf.mq_vw exactly
       -- (same columns, order, and chr(124) defaults) or every record looks
       -- changed. Computed from the row's own columns, so a not-found pid still
@@ -708,10 +708,10 @@ create or replace package body perf.mq_pkg as
    end process_batch;
 
    /*******************************************************
-        process_batch_rowbyrow (private)
+      process_batch_rowbyrow (private)
 
-        Fallback from batch to row-by-row. Called by process_mq_inbound when a
-        set-based window throws.
+      Fallback from batch to row-by-row. Called by process_mq_inbound when a
+      set-based window throws.
    *******************************************************/
    procedure process_batch_rowbyrow (
       i_status                in number,

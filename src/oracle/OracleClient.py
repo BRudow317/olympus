@@ -9,13 +9,11 @@ AUTO_DEV01_PORT=1536
 AUTO_DEV01_SID=ERMPASD1"""
 
 from __future__ import annotations
-
 import logging
 import os
 from collections.abc import Iterator, Iterable, Callable
 from pathlib import Path
 from typing import Any
-
 import oracledb
 from oracledb import (
     LOB, Connection, Cursor, DataFrame, DbObjectType, DbType,
@@ -23,7 +21,6 @@ from oracledb import (
 )
 
 logger: logging.Logger = logging.getLogger(__name__)
-
 
 class OracleClient:
     _oracle_user: str
@@ -214,7 +211,6 @@ class OracleClient:
         cursor.rowfactory = process_row
         return cursor
 
-
     def lazy_query(
         self,
         statement: str,
@@ -317,7 +313,6 @@ class OracleClient:
             batch_size=batch_size,
         )
 
-
     def plus_query(self, sql: str) -> tuple[int, str | None, str | None]:
         import sys
         import subprocess
@@ -368,7 +363,7 @@ class OracleClient:
             default_length
         FROM all_tab_columns
         WHERE upper(owner) = upper(:schema)
-        AND upper(table_name) = upper(:table_name)
+          AND upper(table_name) = upper(:table_name)
         ORDER BY column_id
         """
         binds = {"schema": schema.upper(), "table_name": table.upper()}
@@ -423,19 +418,19 @@ class OracleClient:
             con.origin_con_id
         FROM all_constraints con
         JOIN all_cons_columns col
-            ON con.constraint_name = col.constraint_name
-            AND con.owner = col.owner
+          ON con.constraint_name = col.constraint_name
+         AND con.owner = col.owner
         LEFT JOIN all_cons_columns ac_cols_ref
-            ON con.r_constraint_name = ac_cols_ref.constraint_name
-            AND con.r_owner = ac_cols_ref.owner
-            AND col.position = ac_cols_ref.position
+          ON con.r_constraint_name = ac_cols_ref.constraint_name
+         AND con.r_owner = ac_cols_ref.owner
+         AND col.position = ac_cols_ref.position
         WHERE 1=1
         """.strip()
         
-        if schema != '*':
+        if schema != '':
             sql += " AND upper(con.owner) = upper(:schema)"
             binds["schema"] = schema.upper()
-        if table_name != '*':
+        if table_name != '':
             sql += " AND upper(con.table_name) = upper(:table_name)"
             binds["table_name"] = table_name.upper()
         if constraint_type != '*':
@@ -446,7 +441,6 @@ class OracleClient:
             binds["column_name"] = column_name
             
         return self.query(sql, binds)
-
 
     def get_composite_keys(self, schema: str, table_name: str) -> list[dict[str, Any]]:
         """Aggregates multikey composite relationships into unified catalog strings using LISTAGG."""
@@ -467,10 +461,10 @@ class OracleClient:
             con.r_constraint_name
         FROM all_constraints con
         JOIN all_cons_columns col
-            ON con.constraint_name = col.constraint_name
-            AND con.owner = col.owner
+          ON con.constraint_name = col.constraint_name
+         AND con.owner = col.owner
         WHERE upper(con.owner) = upper(:schema)
-        AND upper(con.table_name) = upper(:table_name)
+          AND upper(con.table_name) = upper(:table_name)
         GROUP BY
             con.owner,
             con.table_name,
@@ -481,7 +475,6 @@ class OracleClient:
         """.strip()
         binds = {"schema": schema.upper(), "table_name": table_name.upper()}
         return self.query(sql, binds)
-
 
     def check_object_exists(
         self,
@@ -498,7 +491,6 @@ class OracleClient:
         binds = {}
         binds['object_name'] = object_name
         group = " GROUP BY object_name"
-        
         if schema:
             sql += " AND upper(owner) = upper(:schema)"
             binds['schema'] = schema
@@ -510,7 +502,6 @@ class OracleClient:
             
         sql += group
         result = self.query(sql, binds)
-        
         if len(result) > 0:
             if result[0].get('count', 0) > 0:
                 return True
